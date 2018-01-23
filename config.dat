@@ -1,0 +1,121 @@
+####################################     Operation     #########################################
+
+    # 指定对本地文件的操作类型
+    # 可选：Upload、Download
+    Operation =
+
+############################   Upload Configuration   ################################
+
+
+    # 上传对象同时指定ACL，可选：private | public-read |public-read-write | authenticated-read
+    # bucket-owner-read | bucket-owner-full-control, 空不携带
+    PutWithACL = private
+
+    # 需上传的本地文件夹或文件的地址（若上传多个单独指定的文件，可以用英文逗号分隔。若指定文件夹，请勿使用分隔符混合配置。）
+    # 示例：/home/objects 或 /home/dir1/1.txt 或 /home/dir1/1.txt,/home/dir2/2.txt
+    LocalPath =
+
+    # 上传到桶内的目录
+    # 示例：dir/
+    RemoteDir =
+
+    # 是否跳过桶内已存在文件(true/false)，若桶内对象数过多，请勿开启此项配置
+    IgnoreExist =
+
+    # 是否校验以及在detail文件中记录本地MD5和服务端返回的ETag(true/false)
+    CompareETag =
+
+
+###########################  Download Configuration  #################################
+
+
+    # 需要下载的内容（若置空则下载桶内所有对象）
+    # 示例：home/dir/（下载文件夹）或 home/obj（下载单个对象）或 home/obj*（下载home文件夹中以obj为前缀的所有对象）
+    # 可以混合配置，以英文逗号分隔
+    DownloadTarget =
+
+    # 本地保存路径
+    # 示例： /home/download_test
+    SavePath =
+
+
+#################################   Common Configuration   ###################################
+
+    # 账户AK和SK
+    AK =
+    SK =
+
+    # 固定的桶名，所有并发的所有操作均对该桶名进行。
+    # 示例： BucketNameFixed = fixed-bucket-01
+    BucketNameFixed =
+
+    # 工作并发数
+    Concurrency = 20
+
+    # 扫描到对象如果大于MultipartObjectSize，则会以段形式上传并合并，或者以range方式下载并合并，置空不分段，单位为字节B
+    # 示例： MultipartObjectSize = 1073741824(= 1GB)，若对象大于1GB，进行分段的上传和下载操作
+    MultipartObjectSize = 1073741824
+
+    # [PartSize] 分段大小，整数，单位为字节B  !!OBS协议要求上传段每段不小于5MB，不大于5GB（上传时工具会自动约束）!!
+    # 示例： PartSize = 10485760 （10485760=10MB, 52428800=50MB, 104857600=100MB）
+    # ！！若段大小设置过大，进度刷新可能会很慢！！
+    PartSize = 10485760
+
+    # 鉴权签名算法,可选AWSV2 | 空
+    AuthAlgorithm = AWSV2
+
+    # 请参照目标桶区域位置填写Region和DomainName
+    # Region Name      Region            DomainName(EndPoint)
+    #  中国华北区1    cn-north-1    	obs.cn-north-1.myhwclouds.com
+    #  中国华东区2    cn-east-2       obs.cn-east-2.myhwclouds.com
+    #  中国华南区1    cn-south-1    	obs.cn-south-1.myhwclouds.com
+
+    # 请求所在Region，当使用“KMS服务端加密算法”或“特殊鉴权签名算法”且环境配置为多Region模式时必填。
+    Region =
+
+    # 域名地址
+    DomainName = obs.myhwclouds.com
+
+    # 是否使用虚拟主机方式请求，若使用虚拟主机方式，需要保证域名配置正确。
+    VirtualHost = true
+
+    # 使用HTTP还是HTTPs请求。
+    IsHTTPs = true
+
+    # ssl协议版本号配置，当IsHTTPs为True时生效。
+    # 可选值包括：TLSv1, TLSv1_1, TLSv1_2,SSLv23, SSLv2, SSLv3 (不配置默认为SSLv23)
+    # 若python 版本 <  2.7.9，不支持TLSv1_1, TLSv1_2。
+    # TLSv1 : 选择TLS v1.0协议。
+    # TLSv1_1 : 需要openssl version 1.0.1+,  python >2.7.9
+    # TLSv1_2 : 当前最安全协议。需要openssl version 1.0.1+,python >2.7.9
+    # SSLv23: 自动协商最安全协议。
+    # SSLv2 : 若openssl编译时带了OPENSSL_NO_SSL2 参数不可用。该协议不安全，已不建议使用。
+    # SSLv3 : 若openssl编译时带了OPENSSL_NO_SSL3 参数不可用。该协议不安全，已不建议使用。
+    sslVersion = TLSv1_2
+
+    # 服务器端数据加密方法，若不启用，保持为空。可选值：SSE-KMS|SSE-C，不区分大小写。
+    SrvSideEncryptType =
+    # 若配置SSE-C，需提供base64前的CustomerKey。
+    CustomerKey =
+    # 指定服务端加密算法,仅当SrvSideEncryptType为SSE-KMS时有效。可选：aws:kms, AES256。
+    SrvSideEncryptAlgorithm = aws:kms
+    # 指定KMS master encryption key ID,仅当SrvSideEncryptType为SSE-KMS, SrvSideEncryptAlgorithm为aws:kms时有效。若不指定，服务端使用默认ID。
+    SrvSideEncryptAWSKMSKeyId =
+    # 指定服务器端加密context，非必选。
+    SrvSideEncryptContext =
+
+    # 连接建立/请求等待超时时间，单位为s
+    ConnectTimeout = 300
+
+    # 是否记录每个请求的详细结果到detail文件,true|false,关闭该功能不影响性能结果统计。
+    RecordDetails = true
+
+    # 性能统计结果是否包含错误请求,影响统计结果项：avgLatency, tps, sendBPS, recvBPS
+    BadRequestCounted = false
+
+    # 运行时长（秒）
+    # 运行指定时长后退出。若未到指定时长时，配置的请求数完成，工具也会退出。配置为0表示不配置，即按配置的请求数完成后退出。
+    RunSeconds =
+
+    # 是否打印运行中的实时结果和进度。
+    PrintProgress = True
