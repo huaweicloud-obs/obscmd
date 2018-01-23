@@ -36,9 +36,13 @@ cd Python-2.7.14             //进入解压后的目录
 ./configure                  //进行配置
 
 make   // 进行编译
+
 make  install // 进行安装
+
 rm /usr/bin/python  //删除之前版本链接 
+
 ln -s /usr/local/bin/python2.7 /usr/bin/python   //创建新版本python链接 
+
 python -v   //查看 python版本是不是已经变为安装的版本
 
 step 2: install openssl, the version is morthan 1.0.2n;
