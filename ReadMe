@@ -3,6 +3,17 @@ Please refer to the word doc for configuration and start instruction.
 
 
 -- UPDATES:
+2018.1.31 - v4.5.0
+1. Added - add a configuration for checking the file is changing before putting object.
+2. Fixed - if comparison of etag and md5 fails, delete the object.
+
+2018.1.23 - v4.4.0
+1. Added - enhance the timed task tool
+
+2018.1.20 - v4.3.0
+1. Fixed - normalize the variables' name
+2. Fixed - cancel windows support, cancel dealing with large files file first in upload.
+
 2018.1.17 - v4.2.1
 1. Fixed - optimize the format of brief file
 2. Fixed - some spelling errors

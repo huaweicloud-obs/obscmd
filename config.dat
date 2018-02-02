@@ -25,6 +25,9 @@
     # 是否校验以及在detail文件中记录本地MD5和服务端返回的ETag(true/false)
     CompareETag =
 
+    # 是否检查本地文件是否正在被修改，若正在被修改，则跳过该文件(true/false)
+    CheckFileChanging =
+
 
 ###########################  Download Configuration  #################################
 
@@ -45,7 +48,7 @@
     AK =
     SK =
 
-    # 固定的桶名，所有并发的所有操作均对该桶名进行。
+    # 固定桶名
     # 示例： BucketNameFixed = fixed-bucket-01
     BucketNameFixed =
 
@@ -77,7 +80,7 @@
     DomainName = obs.myhwclouds.com
 
     # 是否使用虚拟主机方式请求，若使用虚拟主机方式，需要保证域名配置正确。
-    VirtualHost = true
+    VirtualHost = false
 
     # 使用HTTP还是HTTPs请求。
     IsHTTPs = true

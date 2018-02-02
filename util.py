@@ -2,12 +2,8 @@
 import threading
 import logging
 import subprocess
-import shutil
 import os
 import hashlib
-
-from constant import LOCAL_SYS
-
 
 TIME_FORMAT = '%a, %d %b %Y %H:%M:%S GMT'
 ISO8601 = '%Y%m%dT%H%M%SZ'
@@ -93,10 +89,7 @@ def convert_to_size_str(size_byte):
 
 
 def rename(src, dst):
-    if LOCAL_SYS != 'windows':
-        subprocess.Popen("mv '{src}' '{dst}'".format(src=src, dst=dst), shell=True).communicate()
-    else:
-        shutil.move(src, dst)
+    subprocess.Popen("mv '{src}' '{dst}'".format(src=src, dst=dst), shell=True).communicate()
 
 
 def calculate_file_md5(file_location, part_start=0, part_size=None):
@@ -116,6 +109,13 @@ def calculate_file_md5(file_location, part_start=0, part_size=None):
     return m.hexdigest()
 
 
+class User:
+    def __init__(self, username, ak, sk):
+        self.username = username
+        self.ak = ak
+        self.sk = sk
+
+
 class Counter:
     def __init__(self):
         self.count = 0
@@ -124,6 +124,12 @@ class Counter:
 class ThreadsStopFlag:
     def __init__(self):
         self.flag = False
+
+
+class Data:
+    def __init__(self, chunk, offset):
+        self.chunk = chunk
+        self.offset = offset
 
 
 class RangeFileWriter(threading.Thread):
@@ -150,7 +156,7 @@ class RangeFileWriter(threading.Thread):
                     continue
                 elif data is False:
                     # A False is a sign for failure of a part downloading.
-                    logging.warn('file: %s, some part_download task failed, delete it.' % self.file_path)
+                    logging.error('file: %s, some part_download task failed, delete it.' % self.file_path)
                     should_delete = True
                     break
                 f.seek(data.offset)

@@ -5,14 +5,15 @@ import base64
 import hashlib
 import logging
 import logging.config
+import logging.handlers
 import multiprocessing
 import os
 import sys
 import threading
 import time
 import traceback
-import Util
-import obsPyCmd
+import util
+import obspycmd
 import results
 import myLib.cloghandler
 from copy import deepcopy
@@ -21,24 +22,14 @@ from constant import ConfigFile
 from constant import LOCAL_SYS
 from constant import SYS_ENCODING
 from constant import CONTENT_TYPES
-from Util import Counter
-from Util import ThreadsStopFlag
-from Util import RangeFileWriter
+from util import Counter
+from util import ThreadsStopFlag
+from util import RangeFileWriter
+from util import User
 
-ThreadQueue = Queue.Queue
+logging.handlers.ConcurrentRotatingFileHandler = myLib.cloghandler.ConcurrentRotatingFileHandler
 
-if LOCAL_SYS == 'windows':
-    Worker = threading.Thread
-    Queue = Queue.Queue
-    Lock = threading.Lock
-else:
-    Worker = multiprocessing.Process
-    Queue = multiprocessing.Queue
-    Lock = multiprocessing.Lock
-
-VERSION = 'v4.2.1'
-# running config
-CONFIG = {}
+VERSION = 'v4.5.0'
 RETRY_TIMES = 3
 UPLOAD_PART_MIN_SIZE = 5 * 1024 ** 2
 UPLOAD_PART_MAX_SIZE = 5 * 1024 ** 3
@@ -46,23 +37,17 @@ TEST_CASES = {
     201: 'PutObject;put_object',
     202: 'GetObject;get_object'
 }
+
 user = None
-all_files_queue = Queue()
-all_objects_queue = Queue()
-big_obj_tuple_list_to_range_download_for_windows = []
+running_config = {}
+all_files_queue = multiprocessing.Queue()
+all_objects_queue = multiprocessing.Queue()
 results_queue = multiprocessing.Queue()
-lock = Lock()
+lock = multiprocessing.Lock()
 current_concurrency = multiprocessing.Value('i', 0)
 total_data = multiprocessing.Value('f', 0)
 total_data_upload = 0
 total_data_download = 0
-
-
-class User:
-    def __init__(self, username, ak, sk):
-        self.username = username
-        self.ak = ak
-        self.sk = sk
 
 
 def read_config(config_file_name=ConfigFile.FILE_CONFIG):
@@ -73,108 +58,112 @@ def read_config(config_file_name=ConfigFile.FILE_CONFIG):
         for line in lines:
             line = line.strip()
             if line and line[0] != '#':
-                CONFIG[line[:line.find('=')].strip()] = line[line.find('=') + 1:].strip()
+                running_config[line[:line.find('=')].strip()] = line[line.find('=') + 1:].strip()
             else:
                 continue
         f.close()
 
-        CONFIG['AK'] = prompt_for_input('AK', 'your account')
-        CONFIG['SK'] = prompt_for_input('SK', 'your account')
-        user = User('obscmd', CONFIG['AK'], CONFIG['SK'])
+        running_config['AK'] = prompt_for_input('AK', 'your account')
+        running_config['SK'] = prompt_for_input('SK', 'your account')
+        user = User('obscmd', running_config['AK'], running_config['SK'])
         # Don't show SK on screen display
-        del CONFIG['SK']
+        del running_config['SK']
 
-        if CONFIG['IsHTTPs'].lower() == 'true':
-            CONFIG['IsHTTPs'] = True
+        if running_config['IsHTTPs'].lower() == 'true':
+            running_config['IsHTTPs'] = True
         else:
-            CONFIG['IsHTTPs'] = False
+            running_config['IsHTTPs'] = False
 
-        CONFIG['ConnectTimeout'] = int(CONFIG['ConnectTimeout'])
-        if int(CONFIG['ConnectTimeout']) < 5:
-            CONFIG['ConnectTimeout'] = 5
+        running_config['ConnectTimeout'] = int(running_config['ConnectTimeout'])
+        if int(running_config['ConnectTimeout']) < 5:
+            running_config['ConnectTimeout'] = 5
 
-        if CONFIG['RemoteDir']:
-            CONFIG['RemoteDir'] = CONFIG['RemoteDir'].replace('\\', '/').strip('/')
-            if CONFIG['RemoteDir']:
-                CONFIG['RemoteDir'] = CONFIG['RemoteDir'] + '/'
+        if running_config['RemoteDir']:
+            running_config['RemoteDir'] = running_config['RemoteDir'].replace('\\', '/').strip('/')
+            if running_config['RemoteDir']:
+                running_config['RemoteDir'] = running_config['RemoteDir'] + '/'
 
-        CONFIG['DownloadTarget'] = CONFIG['DownloadTarget'].lstrip('/')
+        running_config['DownloadTarget'] = running_config['DownloadTarget'].lstrip('/')
 
-        if CONFIG['VirtualHost'].lower() == 'true':
-            CONFIG['VirtualHost'] = True
+        if running_config['VirtualHost'].lower() == 'true':
+            running_config['VirtualHost'] = True
         else:
-            CONFIG['VirtualHost'] = False
+            running_config['VirtualHost'] = False
 
-        if CONFIG['RecordDetails'].lower() == 'true':
-            CONFIG['RecordDetails'] = True
+        if running_config['RecordDetails'].lower() == 'true':
+            running_config['RecordDetails'] = True
         else:
-            CONFIG['RecordDetails'] = False
+            running_config['RecordDetails'] = False
 
-        if CONFIG['BadRequestCounted'].lower() == 'true':
-            CONFIG['BadRequestCounted'] = True
+        if running_config['BadRequestCounted'].lower() == 'true':
+            running_config['BadRequestCounted'] = True
         else:
-            CONFIG['BadRequestCounted'] = False
+            running_config['BadRequestCounted'] = False
 
-        if CONFIG['PrintProgress'].lower() == 'true':
-            CONFIG['PrintProgress'] = True
+        if running_config['PrintProgress'].lower() == 'true':
+            running_config['PrintProgress'] = True
         else:
-            CONFIG['PrintProgress'] = False
+            running_config['PrintProgress'] = False
 
-        if CONFIG['IgnoreExist'].lower() == 'true':
-            CONFIG['IgnoreExist'] = True
+        if running_config['IgnoreExist'].lower() == 'true':
+            running_config['IgnoreExist'] = True
         else:
-            CONFIG['IgnoreExist'] = False
+            running_config['IgnoreExist'] = False
 
-        if CONFIG['CompareETag'].lower() == 'true':
-            CONFIG['CompareETag'] = True
+        if running_config['CompareETag'].lower() == 'true':
+            running_config['CompareETag'] = True
         else:
-            CONFIG['CompareETag'] = False
+            running_config['CompareETag'] = False
+
+        if running_config['CheckFileChanging'].lower() == 'true':
+            running_config['CheckFileChanging'] = True
+        else:
+            running_config['CheckFileChanging'] = False
 
         # User's input
-        CONFIG['Operation'] = prompt_for_input('Operation', 'operation(upload/download)')
-        if not CONFIG['Operation'].lower() == 'upload' and not CONFIG['Operation'].lower() == 'download':
+        running_config['Operation'] = prompt_for_input('Operation', 'operation(upload/download)')
+        if not running_config['Operation'].lower() == 'upload' and not \
+                running_config['Operation'].lower() == 'download':
             print 'Operation must be upload or download, exit...'
             exit()
 
-        if CONFIG['Operation'].lower() == 'upload':
-            CONFIG['Testcase'] = 201
-        elif CONFIG['Operation'].lower() == 'download':
-            CONFIG['Testcase'] = 202
+        if running_config['Operation'].lower() == 'upload':
+            running_config['Testcase'] = 201
+        elif running_config['Operation'].lower() == 'download':
+            running_config['Testcase'] = 202
 
-        if CONFIG.get('MultipartObjectSize'):
-            CONFIG['PartSize'] = prompt_for_input('PartSize', 'multipart size')
-            if CONFIG['Operation'].lower() == 'upload' and int(CONFIG['PartSize']) < UPLOAD_PART_MIN_SIZE:
-                CONFIG['PartSize'] = str(UPLOAD_PART_MIN_SIZE)
-            if CONFIG['Operation'].lower() == 'upload' and int(CONFIG['PartSize']) > UPLOAD_PART_MAX_SIZE:
-                CONFIG['PartSize'] = str(UPLOAD_PART_MAX_SIZE)
-            if int(CONFIG['PartSize']) > int(CONFIG.get('MultipartObjectSize')):
+        if running_config.get('MultipartObjectSize'):
+            running_config['PartSize'] = prompt_for_input('PartSize', 'multipart size')
+            if running_config['Operation'].lower() == 'upload' and int(
+                    running_config['PartSize']) < UPLOAD_PART_MIN_SIZE:
+                running_config['PartSize'] = str(UPLOAD_PART_MIN_SIZE)
+            if running_config['Operation'].lower() == 'upload' and int(
+                    running_config['PartSize']) > UPLOAD_PART_MAX_SIZE:
+                running_config['PartSize'] = str(UPLOAD_PART_MAX_SIZE)
+            if int(running_config['PartSize']) > int(running_config.get('MultipartObjectSize')):
                 print 'In order to cut object(s) to pieces, PartSize must be less than MultipartObjectSize'
                 exit()
         else:
-            CONFIG['MultipartObjectSize'] = '0'
+            running_config['MultipartObjectSize'] = '0'
 
-        CONFIG['Concurrency'] = int(CONFIG['Concurrency']) if CONFIG['Concurrency'] else 0
-        CONFIG['MixLoopCount'] = 1
-        CONFIG['LongConnection'] = False
-        CONFIG['ConnectionHeader'] = ''
-        CONFIG['AvoidSinBkOp'] = True
-        CONFIG['CollectBasicData'] = False
-        CONFIG['IsMaster'] = False
-        CONFIG['IsFromLocal'] = True
-        CONFIG['Mode'] = '1'
-        CONFIG['LatencyRequestsNumber'] = False
-        CONFIG['LatencyPercentileMap'] = False
-        CONFIG['StatisticsInterval'] = 3
-        CONFIG['LatencySections'] = '500,1000,3000,10000'
+        running_config['Concurrency'] = int(running_config['Concurrency']) if running_config['Concurrency'] else 0
+        # running_config['MixLoopCount'] = 1
+        running_config['LongConnection'] = False
+        running_config['ConnectionHeader'] = ''
+        running_config['CollectBasicData'] = False
+        running_config['LatencyRequestsNumber'] = False
+        running_config['LatencyPercentileMap'] = False
+        running_config['StatisticsInterval'] = 3
+        running_config['LatencySections'] = '500,1000,3000,10000'
 
         # If server side encryption is on, set https + AWSV4 on.
-        if CONFIG['SrvSideEncryptType']:
-            if not CONFIG['IsHTTPs']:
-                CONFIG['IsHTTPs'] = True
-                logging.warning('change IsHTTPs to True while use SrvSideEncryptType')
-            if CONFIG['AuthAlgorithm'] != 'AWSV4' and CONFIG['SrvSideEncryptType'].lower() == 'sse-kms':
-                CONFIG['AuthAlgorithm'] = 'AWSV4'
-                logging.warning('change AuthAlgorithm to AWSV4 while use SrvSideEncryptType = SSE-KMS')
+        if running_config['SrvSideEncryptType']:
+            if not running_config['IsHTTPs']:
+                running_config['IsHTTPs'] = True
+                logging.warn('change IsHTTPs to True while use SrvSideEncryptType')
+            if running_config['AuthAlgorithm'] != 'AWSV4' and running_config['SrvSideEncryptType'].lower() == 'sse-kms':
+                running_config['AuthAlgorithm'] = 'AWSV4'
+                logging.warn('change AuthAlgorithm to AWSV4 while use SrvSideEncryptType = SSE-KMS')
     except Exception, data:
         print '[ERROR] Read config file %s error: %s' % (config_file_name, data)
         sys.exit()
@@ -183,9 +172,9 @@ def read_config(config_file_name=ConfigFile.FILE_CONFIG):
 def initialize_object_name(target_in_local, keys_already_exist_list):
     global total_data_upload
 
-    remote_dir = CONFIG['RemoteDir']
-    multi_part_object_size = int(CONFIG.get('MultipartObjectSize'))
-    part_size = int(CONFIG['PartSize'])
+    remote_dir = running_config['RemoteDir']
+    multi_part_object_size = int(running_config.get('MultipartObjectSize'))
+    part_size = int(running_config['PartSize'])
 
     def generate_task_tuple(file_path):
         global total_data_upload
@@ -208,7 +197,7 @@ def initialize_object_name(target_in_local, keys_already_exist_list):
                         msg_t = 'PartSize({part_size}) is too small.\n' \
                                 'You have a file({file}) cut to more than 10,000 parts.\n' \
                                 'Please make sure every file is cut to less than or equal to 10,000 parts. Exit...' \
-                            .format(part_size=CONFIG['PartSize'], file=key)
+                            .format(part_size=running_config['PartSize'], file=key)
                         print msg_t
                         logging.warn(msg_t)
                         exit()
@@ -230,9 +219,7 @@ def initialize_object_name(target_in_local, keys_already_exist_list):
                     logging.warn('scanning dir: ' + fi_d)
                     initialize_object_name(fi_d, keys_already_exist_list)
                 elif os.path.isfile(fi_d):
-                    object_to_put = fi_d.replace(CONFIG['LocalPath'], '')
-                    if LOCAL_SYS == 'windows':
-                        object_to_put = object_to_put.replace('\\', '/')
+                    object_to_put = fi_d.replace(running_config['LocalPath'], '')
                     object_to_put = object_to_put.lstrip('/')
 
                     if remote_dir:
@@ -248,9 +235,9 @@ def initialize_object_name(target_in_local, keys_already_exist_list):
                                       'You have a file({file}) cut to more than 10,000 parts.\n' \
                                       'Please make sure every file is cut to less than or equal to 10,000 parts.\n' \
                                       'Exit...' \
-                                    .format(part_size=CONFIG['PartSize'], file=object_to_put)
+                                    .format(part_size=running_config['PartSize'], file=object_to_put)
                                 print msg
-                                logging.warn(msg)
+                                logging.error(msg)
                                 exit()
 
                         all_files_queue.put((object_to_put, object_size, fi_d))
@@ -278,23 +265,20 @@ def get_all_keys_in_bucket(bucket_name, ak, sk, target_in_bucket=''):
         target = target.strip()
         list_objects = []
         marker = ''
-        if target:
-            if LOCAL_SYS == 'windows':
-                target = target.replace('\\', '/')
 
         while marker is not None:
-            conn = obsPyCmd.MyHTTPConnection(host=CONFIG['DomainName'],
-                                             is_secure=CONFIG['IsHTTPs'],
-                                             ssl_version=CONFIG['sslVersion'],
-                                             timeout=CONFIG['ConnectTimeout'],
-                                             long_connection=CONFIG['LongConnection'],
-                                             conn_header=CONFIG['ConnectionHeader'])
-            rest = obsPyCmd.OBSRequestDescriptor(request_type='ListObjectsInBucket',
+            conn = obspycmd.MyHTTPConnection(host=running_config['DomainName'],
+                                             is_secure=running_config['IsHTTPs'],
+                                             ssl_version=running_config['sslVersion'],
+                                             timeout=running_config['ConnectTimeout'],
+                                             long_connection=running_config['LongConnection'],
+                                             conn_header=running_config['ConnectionHeader'])
+            rest = obspycmd.OBSRequestDescriptor(request_type='ListObjectsInBucket',
                                                  ak=ak, sk=sk,
-                                                 auth_algorithm=CONFIG['AuthAlgorithm'],
-                                                 virtual_host=CONFIG['VirtualHost'],
-                                                 domain_name=CONFIG['DomainName'],
-                                                 region=CONFIG['Region'])
+                                                 auth_algorithm=running_config['AuthAlgorithm'],
+                                                 virtual_host=running_config['VirtualHost'],
+                                                 domain_name=running_config['DomainName'],
+                                                 region=running_config['Region'])
             rest.bucket = bucket_name
 
             # List a directory
@@ -302,19 +286,19 @@ def get_all_keys_in_bucket(bucket_name, ak, sk, target_in_bucket=''):
                 dir_prefix = target.strip('/')
                 if dir_prefix:
                     dir_prefix = dir_prefix + '/'
-                    rest.queryArgs['prefix'] = dir_prefix
+                    rest.query_args['prefix'] = dir_prefix
             elif target.endswith('*'):
                 prefix = target.strip('/').rstrip('*')
                 if prefix:
-                    rest.queryArgs['prefix'] = prefix
+                    rest.query_args['prefix'] = prefix
             # List an object
             elif target:
-                rest.queryArgs['prefix'] = target
+                rest.query_args['prefix'] = target
 
             if marker:
-                rest.queryArgs['marker'] = marker
+                rest.query_args['marker'] = marker
 
-            resp = obsPyCmd.OBSRequestHandler(rest, conn).make_request()
+            resp = obspycmd.OBSRequestHandler(rest, conn).make_request()
             marker = resp.return_data
             xml_body = resp.recv_body
 
@@ -324,7 +308,7 @@ def get_all_keys_in_bucket(bucket_name, ak, sk, target_in_bucket=''):
 
             if '<Code>NoSuchBucket</Code>' in xml_body:
                 print 'No such bucket(%s), exit...' % bucket_name
-                logging.warn('No such bucket(%s), exit...' % bucket_name)
+                logging.error('No such bucket(%s), exit...' % bucket_name)
                 exit()
 
             root = ElementTree.fromstring(xml_body)
@@ -356,21 +340,28 @@ def put_object(worker_id, conn):
         try:
             file_tuple = all_files_queue.get(block=False)
             logging.info('put_object tuple:' + str(file_tuple))
+            # Check if this file is changing. If true, skip it.
+            if running_config['CheckFileChanging']:
+                m_time = os.stat(file_tuple[2]).st_mtime
+                time.sleep(3)
+                if os.stat(file_tuple[2]).st_mtime != m_time:
+                    logging.warn('File(%s) is changing, skip it!' % file_tuple[2])
+                    continue
         except Empty:
             continue
-        if file_tuple[1] < int(CONFIG.get('MultipartObjectSize')):
-            rest = obsPyCmd.OBSRequestDescriptor(request_type='PutObject',
+        if file_tuple[1] < int(running_config.get('MultipartObjectSize')):
+            rest = obspycmd.OBSRequestDescriptor(request_type='PutObject',
                                                  ak=user.ak, sk=user.sk,
-                                                 auth_algorithm=CONFIG['AuthAlgorithm'],
-                                                 virtual_host=CONFIG['VirtualHost'],
-                                                 domain_name=CONFIG['DomainName'],
-                                                 region=CONFIG['Region'])
+                                                 auth_algorithm=running_config['AuthAlgorithm'],
+                                                 virtual_host=running_config['VirtualHost'],
+                                                 domain_name=running_config['DomainName'],
+                                                 region=running_config['Region'])
             try:
                 rest.key = file_tuple[0].decode(SYS_ENCODING).encode('utf8')
             except UnicodeDecodeError:
-                logging.warn('Decode error, key: ' + file_tuple[0])
+                logging.error('Decode error, key: ' + file_tuple[0])
                 continue
-            rest.bucket = CONFIG['BucketNameFixed']
+            rest.bucket = running_config['BucketNameFixed']
 
             rest.headers['content-type'] = 'application/octet-stream'
             tokens = file_tuple[0].split('.')
@@ -379,48 +370,48 @@ def put_object(worker_id, conn):
                 if suffix in CONTENT_TYPES:
                     rest.headers['content-type'] = CONTENT_TYPES[suffix]
 
-            if CONFIG['PutWithACL']:
-                rest.headers['x-amz-acl'] = CONFIG['PutWithACL']
-            if CONFIG['SrvSideEncryptType'].lower() == 'sse-c':
+            if running_config['PutWithACL']:
+                rest.headers['x-amz-acl'] = running_config['PutWithACL']
+            if running_config['SrvSideEncryptType'].lower() == 'sse-c':
                 rest.headers['x-amz-server-side-encryption-customer-algorithm'] = 'AES256'
                 rest.headers['x-amz-server-side-encryption-customer-key'] = base64.b64encode(
-                    CONFIG['CustomerKey'])
+                    running_config['CustomerKey'])
                 rest.headers['x-amz-server-side-encryption-customer-key-MD5'] = base64.b64encode(
-                    hashlib.md5(CONFIG['CustomerKey']).digest())
-            elif CONFIG['SrvSideEncryptType'].lower() == 'sse-kms' \
-                    and CONFIG['SrvSideEncryptAlgorithm'].lower() == 'aws:kms':
+                    hashlib.md5(running_config['CustomerKey']).digest())
+            elif running_config['SrvSideEncryptType'].lower() == 'sse-kms' \
+                    and running_config['SrvSideEncryptAlgorithm'].lower() == 'aws:kms':
                 rest.headers['x-amz-server-side-encryption'] = 'aws:kms'
-                if CONFIG['SrvSideEncryptAWSKMSKeyId']:
-                    rest.headers['x-amz-server-side-encryption-aws-kms-key-id'] = CONFIG['SrvSideEncryptAWSKMSKeyId']
-                if CONFIG['SrvSideEncryptContext']:
-                    rest.headers['x-amz-server-side-encryption-context'] = CONFIG['SrvSideEncryptContext']
-            elif CONFIG['SrvSideEncryptType'].lower() == 'sse-kms' \
-                    and CONFIG['SrvSideEncryptAlgorithm'].lower() == 'aes256':
+                if running_config['SrvSideEncryptAWSKMSKeyId']:
+                    rest.headers['x-amz-server-side-encryption-aws-kms-key-id'] = running_config[
+                        'SrvSideEncryptAWSKMSKeyId']
+                if running_config['SrvSideEncryptContext']:
+                    rest.headers['x-amz-server-side-encryption-context'] = running_config['SrvSideEncryptContext']
+            elif running_config['SrvSideEncryptType'].lower() == 'sse-kms' \
+                    and running_config['SrvSideEncryptAlgorithm'].lower() == 'aes256':
                 rest.headers['x-amz-server-side-encryption'] = 'AES256'
 
             file_location = file_tuple[2]
-            rest.contentLength = file_tuple[1]
+            rest.content_length = file_tuple[1]
 
             retry_count = 0
-            resp = obsPyCmd.DefineResponse()
+            resp = obspycmd.DefineResponse()
             resp.status = '99999 Not Ready'
             md5 = ''
             e_tag = ''
             e_tag_record = ''
 
             while not resp.status.startswith('20') or md5 != e_tag:
-                resp = obsPyCmd.OBSRequestHandler(rest, conn).make_request(file_location=file_location)
+                resp = obspycmd.OBSRequestHandler(rest, conn).make_request(file_location=file_location)
 
-                e_tag = resp.e_tag
-                if CONFIG['CompareETag']:
-                    if not md5:
-                        md5 = Util.calculate_file_md5(file_location=file_location)
-                e_tag_record = 'ETag: local(%s) server(%s)' % (md5, e_tag)
+                if running_config['CompareETag']:
+                    e_tag = resp.e_tag
+                    md5 = util.calculate_file_md5(file_location=file_location)
+                e_tag_record = 'ETag: local(%s) server(%s)' % (md5, resp.e_tag)
 
                 if not resp.status.startswith('20'):
                     if retry_count == RETRY_TIMES:
-                        logging.warn('Max retry put_object, key: %s. Status is %s' %
-                                     (rest.key, resp.status))
+                        logging.error('Max retry put_object, key: %s. Status is %s' %
+                                      (rest.key, resp.status))
                         break
                     retry_count += 1
                     logging.warn('Status is %s. Retry put_object, key: %s, retry_count: %d' %
@@ -428,8 +419,18 @@ def put_object(worker_id, conn):
                     time.sleep(5)
                 elif md5 != e_tag:
                     if retry_count == RETRY_TIMES:
-                        logging.warn('Max retry put_object, key: %s. Compare md5 error, %s.' %
+                        resp.status = '9901 data error md5'
+                        logging.warn('Max retry put_object, delete object, key: %s. Compare md5 error, %s.' %
                                      (rest.key, e_tag_record))
+                        rest_d = obspycmd.OBSRequestDescriptor(request_type='DeleteObject',
+                                                               ak=user.ak, sk=user.sk,
+                                                               auth_algorithm=running_config['AuthAlgorithm'],
+                                                               virtual_host=running_config['VirtualHost'],
+                                                               domain_name=running_config['DomainName'],
+                                                               region=running_config['Region'])
+                        rest_d.bucket = rest.bucket
+                        rest_d.key = rest.key
+                        obspycmd.OBSRequestHandler(rest_d, conn).make_request()
                         break
                     retry_count += 1
                     logging.warn('Compare md5 error, %s. Retry put_object, key: %s, retry_count: %d' %
@@ -438,21 +439,21 @@ def put_object(worker_id, conn):
                 else:
                     break
             results_queue.put(
-                (worker_id, user.username, rest.recordUrl, rest.requestType, resp.start_time, resp.end_time,
+                (worker_id, user.username, rest.record_url, rest.request_type, resp.start_time, resp.end_time,
                  resp.send_bytes, 0, e_tag_record, resp.request_id, resp.status, resp.id2))
         else:
-            rest = obsPyCmd.OBSRequestDescriptor(request_type='',
+            rest = obspycmd.OBSRequestDescriptor(request_type='',
                                                  ak=user.ak, sk=user.sk,
-                                                 auth_algorithm=CONFIG['AuthAlgorithm'],
-                                                 virtual_host=CONFIG['VirtualHost'],
-                                                 domain_name=CONFIG['DomainName'],
-                                                 region=CONFIG['Region'])
+                                                 auth_algorithm=running_config['AuthAlgorithm'],
+                                                 virtual_host=running_config['VirtualHost'],
+                                                 domain_name=running_config['DomainName'],
+                                                 region=running_config['Region'])
             try:
                 rest.key = file_tuple[0].decode(SYS_ENCODING).encode('utf8')
             except UnicodeDecodeError:
-                logging.warn('Decode error, key: ' + file_tuple[0])
+                logging.error('Decode error, key: ' + file_tuple[0])
                 continue
-            rest.bucket = CONFIG['BucketNameFixed']
+            rest.bucket = running_config['BucketNameFixed']
             process_multi_parts_upload(file_tuple=file_tuple,
                                        rest=rest,
                                        conn=conn,
@@ -466,59 +467,61 @@ def get_object(worker_id, conn):
         except Empty:
             continue
 
-        if object_tuple[1] < int(CONFIG.get('MultipartObjectSize')):
-            rest = obsPyCmd.OBSRequestDescriptor(request_type='GetObject',
+        if object_tuple[1] < int(running_config.get('MultipartObjectSize')):
+            rest = obspycmd.OBSRequestDescriptor(request_type='GetObject',
                                                  ak=user.ak, sk=user.sk,
-                                                 auth_algorithm=CONFIG['AuthAlgorithm'],
-                                                 virtual_host=CONFIG['VirtualHost'],
-                                                 domain_name=CONFIG['DomainName'],
-                                                 region=CONFIG['Region'])
-            if CONFIG['SrvSideEncryptType'].lower() == 'sse-c':
+                                                 auth_algorithm=running_config['AuthAlgorithm'],
+                                                 virtual_host=running_config['VirtualHost'],
+                                                 domain_name=running_config['DomainName'],
+                                                 region=running_config['Region'])
+            if running_config['SrvSideEncryptType'].lower() == 'sse-c':
                 rest.headers['x-amz-server-side-encryption-customer-algorithm'] = 'AES256'
 
-            save_path_parent = CONFIG['SavePath']
-            rest.bucket = CONFIG['BucketNameFixed']
+            save_path_parent = running_config['SavePath']
+            rest.bucket = running_config['BucketNameFixed']
             rest.key = object_tuple[0].encode('utf8')
             file_name = object_tuple[0].encode(SYS_ENCODING)
 
-            if CONFIG['SrvSideEncryptType'].lower() == 'sse-c':
-                rest.headers['x-amz-server-side-encryption-customer-key'] = base64.b64encode(CONFIG['CustomerKey'])
+            if running_config['SrvSideEncryptType'].lower() == 'sse-c':
+                rest.headers['x-amz-server-side-encryption-customer-key'] = base64.b64encode(
+                    running_config['CustomerKey'])
                 rest.headers['x-amz-server-side-encryption-customer-key-MD5'] = base64.b64encode(
-                    hashlib.md5(CONFIG['CustomerKey']).digest())
-            resp = obsPyCmd.OBSRequestHandler(rest, conn).make_request(save_path_parent=save_path_parent,
+                    hashlib.md5(running_config['CustomerKey']).digest())
+            resp = obspycmd.OBSRequestHandler(rest, conn).make_request(save_path_parent=save_path_parent,
                                                                        file_name=file_name)
             md5 = ''
             e_tag = resp.e_tag
             e_tag_record = 'ETag: local(%s) server(%s)' % (md5, e_tag)
 
             results_queue.put(
-                (worker_id, user.username, rest.recordUrl, rest.requestType, resp.start_time, resp.end_time, 0,
+                (worker_id, user.username, rest.record_url, rest.request_type, resp.start_time, resp.end_time, 0,
                  resp.recv_bytes, e_tag_record, resp.request_id, resp.status, resp.id2)
             )
         else:
-            rest = obsPyCmd.OBSRequestDescriptor(request_type='GetObject',
+            rest = obspycmd.OBSRequestDescriptor(request_type='GetObject',
                                                  ak=user.ak, sk=user.sk,
-                                                 auth_algorithm=CONFIG['AuthAlgorithm'],
-                                                 virtual_host=CONFIG['VirtualHost'],
-                                                 domain_name=CONFIG['DomainName'],
-                                                 region=CONFIG['Region'])
-            if CONFIG['SrvSideEncryptType'].lower() == 'sse-c':
+                                                 auth_algorithm=running_config['AuthAlgorithm'],
+                                                 virtual_host=running_config['VirtualHost'],
+                                                 domain_name=running_config['DomainName'],
+                                                 region=running_config['Region'])
+            if running_config['SrvSideEncryptType'].lower() == 'sse-c':
                 rest.headers['x-amz-server-side-encryption-customer-algorithm'] = 'AES256'
 
-            save_path_parent = CONFIG['SavePath']
-            rest.bucket = CONFIG['BucketNameFixed']
+            save_path_parent = running_config['SavePath']
+            rest.bucket = running_config['BucketNameFixed']
             rest.key = object_tuple[0].encode('utf8')
 
-            if CONFIG['SrvSideEncryptType'].lower() == 'sse-c':
-                rest.headers['x-amz-server-side-encryption-customer-key'] = base64.b64encode(CONFIG['CustomerKey'])
+            if running_config['SrvSideEncryptType'].lower() == 'sse-c':
+                rest.headers['x-amz-server-side-encryption-customer-key'] = base64.b64encode(
+                    running_config['CustomerKey'])
                 rest.headers['x-amz-server-side-encryption-customer-key-MD5'] = base64.b64encode(
-                    hashlib.md5(CONFIG['CustomerKey']).digest())
+                    hashlib.md5(running_config['CustomerKey']).digest())
             process_range_download(rest, object_tuple, save_path_parent, worker_id)
 
 
 def process_range_download(rest, object_tuple, save_path_parent, worker_id):
     size_to_download = object_tuple[1]
-    part_size = int(CONFIG['PartSize'])
+    part_size = int(running_config['PartSize'])
     total_parts = size_to_download / part_size + 1
     parts_count = 0
     range_start = 0
@@ -526,7 +529,7 @@ def process_range_download(rest, object_tuple, save_path_parent, worker_id):
     counter = Counter()
     stop_flag_obj = ThreadsStopFlag()
     lock_t = threading.Lock()
-    data_queue = ThreadQueue(1024)
+    data_queue = Queue.Queue(1024)
     file_name = object_tuple[0].encode(SYS_ENCODING)
     file_path = os.path.join(save_path_parent, file_name)
     dir_path = os.path.dirname(file_path)
@@ -545,7 +548,7 @@ def process_range_download(rest, object_tuple, save_path_parent, worker_id):
         if stop_flag_obj.flag:
             total_data.value -= size_to_download
             break
-        if counter.count > 0 and current_concurrency.value >= CONFIG['Concurrency']:
+        if counter.count > 0 and current_concurrency.value >= running_config['Concurrency']:
             time.sleep(0.5)
             continue
 
@@ -562,14 +565,14 @@ def process_range_download(rest, object_tuple, save_path_parent, worker_id):
         def run_download_part(rest_t, range_start_t):
             temp_conn = None
             try:
-                temp_conn = obsPyCmd.MyHTTPConnection(host=CONFIG['DomainName'],
-                                                      is_secure=CONFIG['IsHTTPs'],
-                                                      ssl_version=CONFIG['sslVersion'],
-                                                      timeout=CONFIG['ConnectTimeout'],
-                                                      long_connection=CONFIG['LongConnection'],
-                                                      conn_header=CONFIG['ConnectionHeader'])
+                temp_conn = obspycmd.MyHTTPConnection(host=running_config['DomainName'],
+                                                      is_secure=running_config['IsHTTPs'],
+                                                      ssl_version=running_config['sslVersion'],
+                                                      timeout=running_config['ConnectTimeout'],
+                                                      long_connection=running_config['LongConnection'],
+                                                      conn_header=running_config['ConnectionHeader'])
                 retry_count = 0
-                resp = obsPyCmd.DefineResponse()
+                resp = obspycmd.DefineResponse()
                 resp.status = '99999 Not Ready'
                 is_last_retry = False
                 md5 = ''
@@ -577,7 +580,7 @@ def process_range_download(rest, object_tuple, save_path_parent, worker_id):
                 while not resp.status.startswith('20'):
                     if retry_count == RETRY_TIMES:
                         is_last_retry = True
-                    resp = obsPyCmd.OBSRequestHandler(rest_t, temp_conn).make_request(is_range_download=True,
+                    resp = obspycmd.OBSRequestHandler(rest_t, temp_conn).make_request(is_range_download=True,
                                                                                       range_start=range_start_t,
                                                                                       part_download_queue=data_queue,
                                                                                       stop_flag_obj=stop_flag_obj,
@@ -586,8 +589,8 @@ def process_range_download(rest, object_tuple, save_path_parent, worker_id):
                     e_tag_record = 'ETag: local(%s) server(%s)' % (md5, e_tag)
                     if not resp.status.startswith('20'):
                         if retry_count == RETRY_TIMES:
-                            logging.warn('Max retry download_part, key: %s, range start: %d. Status is %s.' %
-                                         (rest.key, range_start_t, resp.status))
+                            logging.error('Max retry download_part, key: %s, range start: %d. Status is %s.' %
+                                          (rest.key, range_start_t, resp.status))
                             break
                         retry_count += 1
                         logging.warn('Status is %s. Retry download_part, key: %s, range start: %d, retry_count: %d' %
@@ -596,11 +599,11 @@ def process_range_download(rest, object_tuple, save_path_parent, worker_id):
                     else:
                         break
                 results_queue.put(
-                    (worker_id, user.username, rest_t.recordUrl, rest_t.requestType, resp.start_time,
+                    (worker_id, user.username, rest_t.record_url, rest_t.request_type, resp.start_time,
                      resp.end_time, 0, resp.recv_bytes, e_tag_record, resp.request_id, resp.status, resp.id2))
             except Exception:
                 stack = traceback.format_exc()
-                logging.warn('range_download exception stack: %s' % stack)
+                logging.error('range_download exception stack: %s' % stack)
             finally:
                 if temp_conn:
                     temp_conn.close_connection()
@@ -640,22 +643,22 @@ def range_download_for_list(big_obj_tuple_to_download):
 
     worker_id = 9999
 
-    rest = obsPyCmd.OBSRequestDescriptor(request_type='GetObject',
+    rest = obspycmd.OBSRequestDescriptor(request_type='GetObject',
                                          ak=user.ak, sk=user.sk,
-                                         auth_algorithm=CONFIG['AuthAlgorithm'],
-                                         virtual_host=CONFIG['VirtualHost'],
-                                         domain_name=CONFIG['DomainName'],
-                                         region=CONFIG['Region'])
-    if CONFIG['SrvSideEncryptType'].lower() == 'sse-c':
+                                         auth_algorithm=running_config['AuthAlgorithm'],
+                                         virtual_host=running_config['VirtualHost'],
+                                         domain_name=running_config['DomainName'],
+                                         region=running_config['Region'])
+    if running_config['SrvSideEncryptType'].lower() == 'sse-c':
         rest.headers['x-amz-server-side-encryption-customer-algorithm'] = 'AES256'
 
-    save_path_parent = CONFIG['SavePath']
-    rest.bucket = CONFIG['BucketNameFixed']
+    save_path_parent = running_config['SavePath']
+    rest.bucket = running_config['BucketNameFixed']
 
     for object_tuple in big_obj_tuple_to_download:
         rest.key = object_tuple[0].encode('utf8')
 
-        if CONFIG['SrvSideEncryptType'].lower() == 'sse-c':
+        if running_config['SrvSideEncryptType'].lower() == 'sse-c':
             rest.headers['x-amz-server-side-encryption-customer-key'] = base64.b64encode(rest.key[-32:].zfill(32))
             rest.headers['x-amz-server-side-encryption-customer-key-MD5'] = base64.b64encode(
                 hashlib.md5(rest.key[-32:].zfill(32)).digest())
@@ -668,12 +671,12 @@ def process_multi_parts_upload(file_tuple, rest, conn, worker_id):
     # 1. Initiate multipart upload
     object_path = file_tuple[2]
     size_to_put = file_tuple[1]
-    rest.requestType = 'InitMultiUpload'
+    rest.request_type = 'InitMultiUpload'
     rest.method = 'POST'
     rest.headers = {}
-    rest.queryArgs = {}
-    rest.sendContent = ''
-    rest.contentLength = 0
+    rest.query_args = {}
+    rest.send_content = ''
+    rest.content_length = 0
 
     rest.headers['content-type'] = 'application/octet-stream'
     tokens = file_tuple[0].split('.')
@@ -682,28 +685,30 @@ def process_multi_parts_upload(file_tuple, rest, conn, worker_id):
         if suffix in CONTENT_TYPES:
             rest.headers['content-type'] = CONTENT_TYPES[suffix]
 
-    rest.queryArgs['uploads'] = None
-    if CONFIG['PutWithACL']:
-        rest.headers['x-amz-acl'] = CONFIG['PutWithACL']
-    if CONFIG['SrvSideEncryptType'].lower() == 'sse-c':
+    rest.query_args['uploads'] = None
+    if running_config['PutWithACL']:
+        rest.headers['x-amz-acl'] = running_config['PutWithACL']
+    if running_config['SrvSideEncryptType'].lower() == 'sse-c':
         rest.headers['x-amz-server-side-encryption-customer-algorithm'] = 'AES256'
         rest.headers['x-amz-server-side-encryption-customer-key'] = base64.b64encode(
-            CONFIG['CustomerKey'])
+            running_config['CustomerKey'])
         rest.headers['x-amz-server-side-encryption-customer-key-MD5'] = base64.b64encode(
-            hashlib.md5(CONFIG['CustomerKey']).digest())
-    elif CONFIG['SrvSideEncryptType'].lower() == 'sse-kms' and CONFIG['SrvSideEncryptAlgorithm'].lower() == 'aws:kms':
+            hashlib.md5(running_config['CustomerKey']).digest())
+    elif running_config['SrvSideEncryptType'].lower() == 'sse-kms' and \
+            running_config['SrvSideEncryptAlgorithm'].lower() == 'aws:kms':
         rest.headers['x-amz-server-side-encryption'] = 'aws:kms'
-        if CONFIG['SrvSideEncryptAWSKMSKeyId']:
-            rest.headers['x-amz-server-side-encryption-aws-kms-key-id'] = CONFIG[
+        if running_config['SrvSideEncryptAWSKMSKeyId']:
+            rest.headers['x-amz-server-side-encryption-aws-kms-key-id'] = running_config[
                 'SrvSideEncryptAWSKMSKeyId']
-        if CONFIG['SrvSideEncryptContext']:
-            rest.headers['x-amz-server-side-encryption-context'] = CONFIG['SrvSideEncryptContext']
-    elif CONFIG['SrvSideEncryptType'].lower() == 'sse-kms' and CONFIG['SrvSideEncryptAlgorithm'].lower() == 'aes256':
+        if running_config['SrvSideEncryptContext']:
+            rest.headers['x-amz-server-side-encryption-context'] = running_config['SrvSideEncryptContext']
+    elif running_config['SrvSideEncryptType'].lower() == 'sse-kms' and \
+            running_config['SrvSideEncryptAlgorithm'].lower() == 'aes256':
         rest.headers['x-amz-server-side-encryption'] = 'AES256'
 
-    resp = obsPyCmd.OBSRequestHandler(rest, conn).make_request()
+    resp = obspycmd.OBSRequestHandler(rest, conn).make_request()
     results_queue.put(
-        (worker_id, user.username, rest.recordUrl, rest.requestType, resp.start_time,
+        (worker_id, user.username, rest.record_url, rest.request_type, resp.start_time,
          resp.end_time, 0, 0, '', resp.request_id, resp.status, resp.id2))
 
     if not resp.status.startswith('20'):
@@ -715,16 +720,16 @@ def process_multi_parts_upload(file_tuple, rest, conn, worker_id):
     upload_id = resp.return_data
     logging.info("upload id: %s" % upload_id)
     # 2. Upload multipart concurrently
-    rest.requestType = 'UploadPart'
+    rest.request_type = 'UploadPart'
     rest.method = 'PUT'
     rest.headers = {}
-    rest.queryArgs = {}
-    rest.sendContent = ''
-    rest.queryArgs['uploadId'] = upload_id
+    rest.query_args = {}
+    rest.send_content = ''
+    rest.query_args['uploadId'] = upload_id
     part_number = 1
     part_etags = {}
     part_index = 0
-    part_size = int(CONFIG['PartSize'])
+    part_size = int(running_config['PartSize'])
     th_list = []
     counter = Counter()
     stop_flag_obj = ThreadsStopFlag()
@@ -735,56 +740,55 @@ def process_multi_parts_upload(file_tuple, rest, conn, worker_id):
             for th in th_list:
                 th.join()
             return
-        if counter.count > 0 and current_concurrency.value >= CONFIG['Concurrency']:
+        if counter.count > 0 and current_concurrency.value >= running_config['Concurrency']:
             time.sleep(0.5)
             continue
         if size_to_put >= part_size:
-            rest.contentLength = part_size
+            rest.content_length = part_size
         else:
-            rest.contentLength = size_to_put
+            rest.content_length = size_to_put
 
-        rest.queryArgs['partNumber'] = str(part_number)
+        rest.query_args['partNumber'] = str(part_number)
 
-        if CONFIG['SrvSideEncryptType'].lower() == 'sse-c':
+        if running_config['SrvSideEncryptType'].lower() == 'sse-c':
             rest.headers['x-amz-server-side-encryption-customer-algorithm'] = 'AES256'
             rest.headers['x-amz-server-side-encryption-customer-key'] = base64.b64encode(
-                CONFIG['CustomerKey'])
+                running_config['CustomerKey'])
             rest.headers['x-amz-server-side-encryption-customer-key-MD5'] = base64.b64encode(
-                hashlib.md5(CONFIG['CustomerKey']).digest())
+                hashlib.md5(running_config['CustomerKey']).digest())
 
         def run_upload_part(rest_t, part_number_t, part_index_t):
             temp_conn = None
             try:
-                temp_conn = obsPyCmd.MyHTTPConnection(host=CONFIG['DomainName'],
-                                                      is_secure=CONFIG['IsHTTPs'],
-                                                      ssl_version=CONFIG['sslVersion'],
-                                                      timeout=CONFIG['ConnectTimeout'],
-                                                      long_connection=CONFIG['LongConnection'],
-                                                      conn_header=CONFIG['ConnectionHeader'])
+                temp_conn = obspycmd.MyHTTPConnection(host=running_config['DomainName'],
+                                                      is_secure=running_config['IsHTTPs'],
+                                                      ssl_version=running_config['sslVersion'],
+                                                      timeout=running_config['ConnectTimeout'],
+                                                      long_connection=running_config['LongConnection'],
+                                                      conn_header=running_config['ConnectionHeader'])
                 retry_count = 0
-                resp_in = obsPyCmd.DefineResponse()
+                resp_in = obspycmd.DefineResponse()
                 resp_in.status = '99999 Not Ready'
                 md5 = ''
                 e_tag = ''
                 e_tag_record = ''
                 while not resp_in.status.startswith('20') or md5 != e_tag:
-                    resp_in = obsPyCmd.OBSRequestHandler(rest_t, temp_conn).make_request(is_part_upload=True,
+                    resp_in = obspycmd.OBSRequestHandler(rest_t, temp_conn).make_request(is_part_upload=True,
                                                                                          part_index=part_index_t,
                                                                                          file_location=object_path,
                                                                                          stop_flag_obj=stop_flag_obj)
-                    e_tag = resp_in.e_tag
-                    if CONFIG['CompareETag']:
-                        if not md5:
-                            md5 = Util.calculate_file_md5(file_location=object_path,
-                                                          part_start=part_index_t,
-                                                          part_size=rest_t.contentLength)
-                    e_tag_record = 'ETag: local(%s) server(%s)' % (md5, e_tag)
+                    if running_config['CompareETag']:
+                        e_tag = resp_in.e_tag
+                        md5 = util.calculate_file_md5(file_location=object_path,
+                                                      part_start=part_index_t,
+                                                      part_size=rest_t.content_length)
+                    e_tag_record = 'ETag: local(%s) server(%s)' % (md5, resp_in.e_tag)
 
                     if not resp_in.status.startswith('20'):
                         if retry_count == RETRY_TIMES:
                             stop_flag_obj.flag = True
-                            logging.warn('Max retry upload_part, key: %s, part_index: %d, status: %s' %
-                                         (rest.key, part_index_t, resp_in.status))
+                            logging.error('Max retry upload_part, key: %s, part_index: %d, status: %s' %
+                                          (rest.key, part_index_t, resp_in.status))
                             break
                         retry_count += 1
                         logging.warn('Retry upload_part, key: %s, part_index: %d, retry_count: %d, status: %s' %
@@ -792,6 +796,7 @@ def process_multi_parts_upload(file_tuple, rest, conn, worker_id):
                         time.sleep(5)
                     elif md5 != e_tag:
                         if retry_count == RETRY_TIMES:
+                            stop_flag_obj.flag = True
                             logging.warn('Max retry upload_part, key: %s, part_index: %d. Compare md5 error, %s.' %
                                          (rest.key, part_index_t, e_tag_record))
                             break
@@ -802,18 +807,18 @@ def process_multi_parts_upload(file_tuple, rest, conn, worker_id):
                     else:
                         break
                 results_queue.put(
-                    (worker_id, user.username, rest_t.recordUrl, rest_t.requestType, resp_in.start_time,
+                    (worker_id, user.username, rest_t.record_url, rest_t.request_type, resp_in.start_time,
                      resp_in.end_time, resp_in.send_bytes, 0, e_tag_record, resp_in.request_id, resp_in.status,
                      resp.id2))
 
-                if resp_in.status.startswith('20'):
+                if not stop_flag_obj.flag:
                     part_etags[part_number_t] = resp_in.e_tag
                 else:
                     # If some part failed, inform this worker to cancel complete multipart upload.
                     part_etags[part_number_t] = False
             except Exception:
                 stack = traceback.format_exc()
-                logging.warn('multi_parts_upload exception stack: %s' % stack)
+                logging.error('multi_parts_upload exception stack: %s' % stack)
             finally:
                 if temp_conn:
                     temp_conn.close_connection()
@@ -845,8 +850,8 @@ def process_multi_parts_upload(file_tuple, rest, conn, worker_id):
         th_list.append(th)
 
         part_number += 1
-        size_to_put -= rest.contentLength
-        part_index += rest.contentLength
+        size_to_put -= rest.content_length
+        part_index += rest.content_length
 
     for th in th_list:
         th.join()
@@ -854,24 +859,35 @@ def process_multi_parts_upload(file_tuple, rest, conn, worker_id):
     # If some part failed, cancel complete multipart upload.
     for key, value in part_etags.iteritems():
         if value is False:
+            logging.warn('File(%s) some part failed, abort the upload task.' % object_path)
+            rest_abort = obspycmd.OBSRequestDescriptor(request_type='AbortMultiUpload',
+                                                       ak=user.ak, sk=user.sk,
+                                                       auth_algorithm=running_config['AuthAlgorithm'],
+                                                       virtual_host=running_config['VirtualHost'],
+                                                       domain_name=running_config['DomainName'],
+                                                       region=running_config['Region'])
+            rest_abort.bucket = rest.bucket
+            rest_abort.key = rest.key
+            rest_abort.query_args['uploadId'] = rest.query_args['uploadId']
+            obspycmd.OBSRequestHandler(rest_abort, conn).make_request()
             return
 
     # 3. Complete multipart upload
-    rest.requestType = 'CompleteMultiUpload'
+    rest.request_type = 'CompleteMultiUpload'
     rest.method = 'POST'
     rest.headers = {}
-    rest.queryArgs = {}
-    rest.contentLength = 0
+    rest.query_args = {}
+    rest.content_length = 0
     rest.headers['content-type'] = 'application/xml'
-    rest.queryArgs['uploadId'] = upload_id
-    rest.sendContent = '<CompleteMultipartUpload>'
+    rest.query_args['uploadId'] = upload_id
+    rest.send_content = '<CompleteMultipartUpload>'
     for part_index in sorted(part_etags):
-        rest.sendContent += '<Part><PartNumber>%d</PartNumber><ETag>%s</ETag></Part>' % (
+        rest.send_content += '<Part><PartNumber>%d</PartNumber><ETag>%s</ETag></Part>' % (
             part_index, part_etags[part_index])
-    rest.sendContent += '</CompleteMultipartUpload>'
-    resp = obsPyCmd.OBSRequestHandler(rest, conn).make_request()
+    rest.send_content += '</CompleteMultipartUpload>'
+    resp = obspycmd.OBSRequestHandler(rest, conn).make_request()
     results_queue.put(
-        (worker_id, user.username, rest.recordUrl, rest.requestType, resp.start_time,
+        (worker_id, user.username, rest.record_url, rest.request_type, resp.start_time,
          resp.end_time, 0, 0, '', resp.request_id, resp.status, resp.id2))
 
 
@@ -879,25 +895,25 @@ def multi_parts_upload_for_list(big_obj_tuple_to_upload):
     current_concurrency.value += 1
 
     worker_id = 9999
-    conn = obsPyCmd.MyHTTPConnection(host=CONFIG['DomainName'],
-                                     is_secure=CONFIG['IsHTTPs'],
-                                     ssl_version=CONFIG['sslVersion'],
-                                     timeout=CONFIG['ConnectTimeout'],
-                                     long_connection=CONFIG['LongConnection'],
-                                     conn_header=CONFIG['ConnectionHeader'])
+    conn = obspycmd.MyHTTPConnection(host=running_config['DomainName'],
+                                     is_secure=running_config['IsHTTPs'],
+                                     ssl_version=running_config['sslVersion'],
+                                     timeout=running_config['ConnectTimeout'],
+                                     long_connection=running_config['LongConnection'],
+                                     conn_header=running_config['ConnectionHeader'])
 
-    rest = obsPyCmd.OBSRequestDescriptor(request_type='',
+    rest = obspycmd.OBSRequestDescriptor(request_type='',
                                          ak=user.ak, sk=user.sk,
-                                         auth_algorithm=CONFIG['AuthAlgorithm'],
-                                         virtual_host=CONFIG['VirtualHost'],
-                                         domain_name=CONFIG['DomainName'],
-                                         region=CONFIG['Region'])
-    rest.bucket = CONFIG['BucketNameFixed']
+                                         auth_algorithm=running_config['AuthAlgorithm'],
+                                         virtual_host=running_config['VirtualHost'],
+                                         domain_name=running_config['DomainName'],
+                                         region=running_config['Region'])
+    rest.bucket = running_config['BucketNameFixed']
     for large_object_tuple in big_obj_tuple_to_upload:
         try:
             rest.key = large_object_tuple[0].decode(SYS_ENCODING).encode('utf8')
         except UnicodeDecodeError:
-            logging.warn('Decode error, key: ' + large_object_tuple[0])
+            logging.error('Decode error, key: ' + large_object_tuple[0])
             continue
         process_multi_parts_upload(file_tuple=large_object_tuple,
                                    rest=rest,
@@ -916,12 +932,12 @@ def start_worker(worker_id, test_case, valid_start_time, valid_end_time, conn=No
         lock.release()
 
     if not conn:
-        conn = obsPyCmd.MyHTTPConnection(host=CONFIG['DomainName'],
-                                         is_secure=CONFIG['IsHTTPs'],
-                                         ssl_version=CONFIG['sslVersion'],
-                                         timeout=CONFIG['ConnectTimeout'],
-                                         long_connection=CONFIG['LongConnection'],
-                                         conn_header=CONFIG['ConnectionHeader'])
+        conn = obspycmd.MyHTTPConnection(host=running_config['DomainName'],
+                                         is_secure=running_config['IsHTTPs'],
+                                         ssl_version=running_config['sslVersion'],
+                                         timeout=running_config['ConnectTimeout'],
+                                         long_connection=running_config['LongConnection'],
+                                         conn_header=running_config['ConnectionHeader'])
     if test_case != 900:
         try:
             method_to_call = globals()[TEST_CASES[test_case].split(';')[1]]
@@ -931,11 +947,11 @@ def start_worker(worker_id, test_case, valid_start_time, valid_end_time, conn=No
             pass
         except Exception:
             stack = traceback.format_exc()
-            logging.warn('Call method for test case %d except: %s' % (test_case, stack))
+            logging.error('Call method for test case %d except: %s' % (test_case, stack))
     elif test_case == 900:
-        test_cases = [int(case) for case in CONFIG['MixOperations'].split(',')]
+        test_cases = [int(case) for case in running_config['MixOperations'].split(',')]
         tmp = 0
-        while tmp < CONFIG['MixLoopCount']:
+        while tmp < running_config['MixLoopCount']:
             logging.debug("loop count: %d " % tmp)
             tmp += 1
             for case in test_cases:
@@ -961,10 +977,10 @@ def start_worker(worker_id, test_case, valid_start_time, valid_end_time, conn=No
 
 
 def get_total_data_size():
-    if CONFIG['Operation'].lower() == 'download':
+    if running_config['Operation'].lower() == 'download':
         total_data.value = total_data_download
         return total_data
-    elif CONFIG['Operation'].lower() == 'upload':
+    elif running_config['Operation'].lower() == 'upload':
         total_data.value = total_data_upload
         return total_data
     else:
@@ -981,33 +997,33 @@ def precondition():
             "[ERROR]", getpass.getuser())
 
     # Check if the test case is set right.
-    if CONFIG['Testcase'] not in TEST_CASES:
-        return False, "\033[1;31;40m%s\033[0m Test Case [%d] not supported" % ("[ERROR]", CONFIG['Testcase'])
+    if running_config['Testcase'] not in TEST_CASES:
+        return False, "\033[1;31;40m%s\033[0m Test Case [%d] not supported" % ("[ERROR]", running_config['Testcase'])
 
     # Test connection
-    if CONFIG['IsHTTPs']:
+    if running_config['IsHTTPs']:
         try:
             import ssl
-            if not CONFIG['sslVersion']:
-                CONFIG['sslVersion'] = 'SSLv23'
-            logging.info('import ssl module done, config ssl Version: %s' % CONFIG['sslVersion'])
+            if not running_config['sslVersion']:
+                running_config['sslVersion'] = 'SSLv23'
+            logging.info('import ssl module done, config ssl Version: %s' % running_config['sslVersion'])
         except ImportError:
             ssl = False
-            logging.warning('import ssl module error')
+            logging.warn('import ssl module error')
             return ssl, 'Python version %s ,import ssl module error'
-    print 'Testing connection to %s\t' % CONFIG['DomainName'].ljust(20)
+    print 'Testing connection to %s\t' % running_config['DomainName'].ljust(20),
     sys.stdout.flush()
     test_conn = None
     try:
-        test_conn = obsPyCmd.MyHTTPConnection(host=CONFIG['DomainName'],
-                                              is_secure=CONFIG['IsHTTPs'],
-                                              ssl_version=CONFIG['sslVersion'],
+        test_conn = obspycmd.MyHTTPConnection(host=running_config['DomainName'],
+                                              is_secure=running_config['IsHTTPs'],
+                                              ssl_version=running_config['sslVersion'],
                                               timeout=60)
         test_conn.create_connection()
         test_conn.connect_connection()
         ssl_ver = ''
-        if CONFIG['IsHTTPs']:
-            if Util.compare_version(sys.version.split()[0], '2.7.9') < 0:
+        if running_config['IsHTTPs']:
+            if util.compare_version(sys.version.split()[0], '2.7.9') < 0:
                 ssl_ver = test_conn.connection.sock._sslobj.cipher()[1]
             else:
                 ssl_ver = test_conn.connection.sock._sslobj.version()
@@ -1017,9 +1033,10 @@ def precondition():
         print rst
         logging.info(
             'connect %s success, python version: %s,  ssl_ver: %s' % (
-                CONFIG['DomainName'], sys.version.replace('\n', ' '), ssl_ver))
+                running_config['DomainName'], sys.version.replace('\n', ' '), ssl_ver))
     except Exception, data:
-        logging.warn('Caught exception when testing connection with %s, except: %s' % (CONFIG['DomainName'], data))
+        logging.error(
+            'Caught exception when testing connection with %s, except: %s' % (running_config['DomainName'], data))
         print '\033[1;31;40m%s *%s*\033[0m' % (' Failed'.ljust(8), data)
         return False, 'Check connection failed'
     finally:
@@ -1031,7 +1048,7 @@ def precondition():
 
 def generate_run_header():
     version = '-------------------obscmd: %s, Python: %s-------------------\n' % (VERSION, sys.version.split(' ')[0])
-    logging.warning(version)
+    logging.warn(version)
     print version
     print 'Config loaded'
 
@@ -1039,7 +1056,7 @@ def generate_run_header():
 
 
 def prompt_for_input(config, prompt):
-    item = CONFIG.get(config)
+    item = running_config.get(config)
     if item is None or item == '':
         try:
             return raw_input('Please input {prompt} for {config}: '.format(prompt=prompt, config=config)).strip()
@@ -1055,8 +1072,8 @@ def run():
     worker_list = []
 
     # Display config
-    print str(CONFIG).replace('\'', '')
-    logging.info(CONFIG)
+    print str(running_config).replace('\'', '')
+    logging.info(running_config)
 
     # Precondition check
     check_result, msg = precondition()
@@ -1067,7 +1084,7 @@ def run():
     msg = 'Start at %s, pid:%d. Press Ctr+C to stop. Screen Refresh Interval: 3 sec' % (
         time.strftime('%X %x %Z'), os.getpid())
     print msg
-    logging.warning(msg)
+    logging.warn(msg)
     # valid_start_time: time of starting the first concurrent
     # valid_end_time: time of finishing all requests
     # current_concurrency：number of concurrent worker, -2 represents exit manually, -1 represents normally
@@ -1075,20 +1092,20 @@ def run():
     valid_end_time = multiprocessing.Value('d', float(sys.maxint))
 
     # Start statistic process or thread in background, for writing log, results and refresh screen print.
-    results_writer = results.ResultWriter(CONFIG, TEST_CASES[CONFIG['Testcase']].split(';')[0].split(';')[0],
+    results_writer = results.ResultWriter(running_config,
+                                          TEST_CASES[running_config['Testcase']].split(';')[0].split(';')[0],
                                           results_queue, get_total_data_size(), valid_start_time, valid_end_time,
                                           current_concurrency)
     results_writer.daemon = True
     results_writer.name = 'resultsWriter'
     results_writer.start()
-    if LOCAL_SYS != 'windows':
-        print 'resultWriter started, pid: %d' % results_writer.pid
-        # Make resultWriter process priority higher
-        os.system('renice -19 -p ' + str(results_writer.pid) + ' >/dev/null 2>&1')
+    print 'resultWriter started, pid: %d' % results_writer.pid
+    # Make resultWriter process priority higher
+    os.system('renice -19 -p ' + str(results_writer.pid) + ' >/dev/null 2>&1')
     time.sleep(.2)
 
     # Exit when not complete all requests
-    def exit_force(signal_num, e):
+    def exit_force(signal_num, _):
         exit_msg = "\n\n\033[5;33;40m[WARN]Terminate Signal %d Received. Terminating... please wait\033[0m" % signal_num
         logging.warn('%r' % exit_msg)
         print exit_msg, '\nWaiting for all the workers exit....'
@@ -1100,9 +1117,8 @@ def run():
         for w in worker_list:
             if w.is_alive():
                 if tmp_i >= 100:
-                    logging.warning('force to terminate worker %s' % w.name)
-                    if LOCAL_SYS != 'windows':
-                        w.terminate()
+                    logging.warn('force to terminate worker %s' % w.name)
+                    w.terminate()
                 else:
                     time.sleep(.1)
                     tmp_i += 1
@@ -1115,82 +1131,40 @@ def run():
             tmp_i += 1
             if tmp_i > 1000:
                 logging.warn('retry too many times, shutdown results_writer using terminate()')
-                if LOCAL_SYS != 'windows':
-                    results_writer.terminate()
+                results_writer.terminate()
             time.sleep(.01)
         print "\n\033[1;33;40m[WARN] Terminated\033[0m\n"
         print version
         sys.exit()
 
-    if LOCAL_SYS != 'windows':
-        import signal
-
-        signal.signal(signal.SIGINT, exit_force)
-        signal.signal(signal.SIGTERM, exit_force)
-
-    if CONFIG['Operation'].lower() == 'upload':
-        valid_start_time.value = time.time()
-        large_tuple_list = []
-        small_tuple_list = []
-        while not all_files_queue.empty():
-            try:
-                queue_tuple = all_files_queue.get(block=False)
-                if queue_tuple[1] < int(CONFIG.get('MultipartObjectSize')):
-                    small_tuple_list.append(queue_tuple)
-                else:
-                    large_tuple_list.append(queue_tuple)
-            except Empty:
-                continue
-        for small_tuple in small_tuple_list:
-            all_files_queue.put(small_tuple)
-        if large_tuple_list:
-            multi_parts_upload_for_list(large_tuple_list)
-
-    # Deal with large objects first if OS is Windows.
-    if LOCAL_SYS == 'windows' and CONFIG['Operation'].lower() == 'download':
-        valid_start_time.value = time.time()
-        large_tuple_list = []
-        small_tuple_list = []
-
-        while not all_objects_queue.empty():
-            try:
-                queue_tuple = all_objects_queue.get(block=False)
-                if queue_tuple[1] < int(CONFIG.get('MultipartObjectSize')):
-                    small_tuple_list.append(queue_tuple)
-                else:
-                    large_tuple_list.append(queue_tuple)
-            except Empty:
-                continue
-        for small_tuple in small_tuple_list:
-            all_objects_queue.put(small_tuple)
-        if large_tuple_list:
-            range_download_for_list(large_tuple_list)
-
-    # Start concurrent business worker('Thread' in Windows, 'Process' in other OS)
+    # Start concurrent business worker
     if valid_start_time.value == float(sys.maxint):
         valid_start_time.value = time.time()
     i = 0
-    while i < CONFIG['Concurrency']:
-        worker = Worker(target=start_worker, args=(i, CONFIG['Testcase'], valid_start_time, valid_end_time, None,
-                                                   False))
+    while i < running_config['Concurrency']:
+        worker = multiprocessing.Process(target=start_worker, args=(i, running_config['Testcase'], valid_start_time,
+                                                                    valid_end_time, None, False))
         i += 1
         worker.daemon = True
         worker.name = 'worker-%d' % i
         worker.start()
-        if LOCAL_SYS != 'windows':
-            # Set the process priority 1 higher
-            os.system('renice -1 -p ' + str(worker.pid) + ' >/dev/null 2>&1')
+        # Set the process priority 1 higher
+        os.system('renice -1 -p ' + str(worker.pid) + ' >/dev/null 2>&1')
         worker_list.append(worker)
 
     logging.info('All %d workers started, valid_start_time: %.3f' % (len(worker_list), valid_start_time.value))
+
+    import signal
+    signal.signal(signal.SIGINT, exit_force)
+    signal.signal(signal.SIGTERM, exit_force)
 
     time.sleep(1)
     # Exit normally
     stop_mark = False
     while not stop_mark:
         time.sleep(.3)
-        if CONFIG['RunSeconds'] and (time.time() - valid_start_time.value >= CONFIG['RunSeconds']):
-            logging.warning('time is up, exit')
+        if running_config['RunSeconds'] and (time.time() - valid_start_time.value >= running_config['RunSeconds']):
+            logging.warn('time is up, exit')
             exit_force(99, None)
         for worker in worker_list:
             if worker.is_alive():
@@ -1211,30 +1185,28 @@ if __name__ == '__main__':
     if not os.path.exists('log'):
         os.mkdir('log')
     logging.config.fileConfig('logging.conf')
-    if LOCAL_SYS == 'windows':
-        logging.getLogger().setLevel(logging.ERROR)
     logging.info('loading config...')
 
     read_config(ConfigFile.FILE_CONFIG)
 
-    operation = CONFIG['Operation'].lower()
+    operation = running_config['Operation'].lower()
 
     # User's input
-    CONFIG['BucketNameFixed'] = prompt_for_input('BucketNameFixed', 'bucket')
-    bucket = CONFIG['BucketNameFixed']
+    running_config['BucketNameFixed'] = prompt_for_input('BucketNameFixed', 'bucket')
+    bucket = running_config['BucketNameFixed']
 
     if operation == 'upload':
         # User's input
-        CONFIG['LocalPath'] = prompt_for_input('LocalPath', 'directory to be uploaded')
-        local_path = CONFIG['LocalPath']
+        running_config['LocalPath'] = prompt_for_input('LocalPath', 'directory to be uploaded')
+        local_path = running_config['LocalPath']
 
         r = prompt_for_input('IgnoreExist', 'yes/no(if no, cover files already exist)')
-        if CONFIG.get('IgnoreExist') is None or CONFIG.get('IgnoreExist') == '':
+        if running_config.get('IgnoreExist') is None or running_config.get('IgnoreExist') == '':
             if r.lower() == 'yes':
-                CONFIG['IgnoreExist'] = True
+                running_config['IgnoreExist'] = True
             else:
-                CONFIG['IgnoreExist'] = False
-        is_ignore_exist = CONFIG['IgnoreExist']
+                running_config['IgnoreExist'] = False
+        is_ignore_exist = running_config['IgnoreExist']
 
         keys_already_exist = set()
         if is_ignore_exist:
@@ -1257,15 +1229,16 @@ if __name__ == '__main__':
 
     elif operation == 'download':
         # User's input
-        if CONFIG.get('DownloadTarget') is None:
-            CONFIG['DownloadTarget'] = prompt_for_input('DownloadTarget',
-                                                        'target in bucket to be downloaded' +
-                                                        '(leave it empty for downloading entire bucket)').strip()
-        download_target = CONFIG['DownloadTarget']
+        if running_config.get('DownloadTarget') is None:
+            running_config['DownloadTarget'] = prompt_for_input(
+                'DownloadTarget',
+                'target in bucket to be downloaded(leave it empty for downloading entire bucket)'
+            ).strip()
+        download_target = running_config['DownloadTarget']
 
         # User's input
-        CONFIG['SavePath'] = prompt_for_input('SavePath', 'save path')
-        if not CONFIG['SavePath']:
+        running_config['SavePath'] = prompt_for_input('SavePath', 'save path')
+        if not running_config['SavePath']:
             print 'Empty SavePath, now exit...'
             exit()
 

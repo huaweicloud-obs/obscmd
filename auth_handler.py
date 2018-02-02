@@ -6,7 +6,7 @@ Handles authentication
 import hashlib
 import base64
 import urllib
-import Util
+import util
 import time
 import logging
 import hmac
@@ -16,7 +16,7 @@ try:
     from hashlib import sha256 as sha256
 except ImportError:
     sha256 = None
-    logging.warn('import sha256 error')
+    logging.error('import sha256 error')
 
 
 class HmacAuthV2Handler:
@@ -28,7 +28,7 @@ class HmacAuthV2Handler:
         self.obsRequest = obsRequest
 
     def handle(self):
-        self.obsRequest.headers['x-amz-date'] = time.strftime(Util.TIME_FORMAT, time.gmtime())
+        self.obsRequest.headers['x-amz-date'] = time.strftime(util.TIME_FORMAT, time.gmtime())
         if self.obsRequest.ak == '' or self.obsRequest.sk == '':
             logging.debug('ak [%s], sk [%s], return' % (self.obsRequest.ak, self.obsRequest.sk))
             return
@@ -71,7 +71,7 @@ class HmacAuthV2Handler:
             c_string += "/%s" % urllib.quote_plus(self.obsRequest.bucket)
         c_string += "/%s" % urllib.quote_plus(self.obsRequest.key)
 
-        if not self.obsRequest.queryArgs:
+        if not self.obsRequest.query_args:
             logging.debug('StrToSign: [%r]' % c_string)
             return c_string
 
@@ -81,15 +81,15 @@ class HmacAuthV2Handler:
             'versioningtorrent', 'uploadId', 'uploads', 'versionId', 'versioning', 'versions', 'website', 'delete',
             'deletebucket', 'cors', 'restore')
         c_string += '?'
-        for arg in sorted(self.obsRequest.queryArgs):
+        for arg in sorted(self.obsRequest.query_args):
             if not arg in interesting_querys:
                 continue
             if c_string[-1:] != '?':
                 c_string += '&%s' % arg
             else:
                 c_string += '%s' % arg
-            if self.obsRequest.queryArgs[arg]:
-                c_string += '=%s' % (self.obsRequest.queryArgs[arg])
+            if self.obsRequest.query_args[arg]:
+                c_string += '=%s' % (self.obsRequest.query_args[arg])
         if c_string[-1:] == '?':
             c_string = c_string[:-1]
         logging.debug('StrToSign: [%r]' % c_string)
@@ -166,10 +166,10 @@ class HmacAuthV4Handler:
             return urllib.quote_plus(self.obsRequest.url, safe='/&?%')
 
     def query_string(self):
-        parameterNames = sorted(self.obsRequest.queryArgs.keys())
+        parameterNames = sorted(self.obsRequest.query_args.keys())
         pairs = []
         for pname in parameterNames:
-            pval = Util.get_utf8_value(self.obsRequest.getQuerysArgs()[pname])
+            pval = util.get_utf8_value(self.obsRequest.getQuerysArgs()[pname])
             pairs.append(urllib.quote_plus(pname, safe='') + '=' + urllib.quote_plus(pval, safe='-_~'))
         return '&'.join(pairs)
 
@@ -179,8 +179,8 @@ class HmacAuthV4Handler:
         # if self.obsRequest.method == 'POST':
         #    return ""
         l = []
-        for param in sorted(self.obsRequest.queryArgs):
-            value = Util.get_utf8_value(self.obsRequest.queryArgs[param])
+        for param in sorted(self.obsRequest.query_args):
+            value = util.get_utf8_value(self.obsRequest.query_args[param])
             l.append('%s=%s' % (urllib.quote_plus(param, safe='-_.~'),
                                 urllib.quote_plus(value, safe='-_.~')))
         logging.debug('query_string: ' + '&'.join(l))
