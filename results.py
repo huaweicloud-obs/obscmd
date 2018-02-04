@@ -149,7 +149,7 @@ class ResultWriter(Process):
 
     def run(self):
         #  ctrl+c monitoring handler
-        def terminate_result(signal_num, e):
+        def terminate_result(signal_num, _):
             logging.warn('result writer exit, signal_num: %d' % signal_num)
             # 标记进程状态，不再刷新屏幕时实结果。
             self.current_concurrency.value = -2
@@ -173,10 +173,12 @@ class ResultWriter(Process):
         signal.signal(signal.SIGUSR1, clear_err_statics)
 
         if self.config['RecordDetails']:
-            self.detail_writer_logger.info(
-                'ProcessId,UserId,URL,Operation,Start_At,End_At,Latency(s),DataSend(Bytes),DataRecv(Bytes),Mark,RequestID,Response,x-amz-id-2')
-        self.realtime_writer_logger.info(
-            'NO      StartTime           OK          Requests    ErrRate(%)  TPS       AvgLatency(s) SendBytes        RecvBytes')
+            detail_header = 'ProcessId,UserId,URL,Operation,Start_At,End_At,Latency(s),' \
+                            'DataSend(Bytes),DataRecv(Bytes),Mark,RequestID,Response,x-amz-id-2'
+            self.detail_writer_logger.info(detail_header)
+        realtime_header = 'NO      StartTime           OK          Requests    ' \
+                          'ErrRate(%)  TPS       AvgLatency(s) SendBytes        RecvBytes'
+        self.realtime_writer_logger.info(realtime_header)
         writer_buffer = []
         last_write_detail_time = time.time()
         while True:
@@ -461,9 +463,8 @@ class ResultWriter(Process):
             logging.warn(str(self.total_data.value) + 'self.total_data.value <= 0')
             proc_bar = ''
         # 获取不同状态类型的字符串描述
-        ok_str = ' '.join([str((k, v)) for (k, v) in self.http_status_dict.items() if '200' <= k < '400']).replace('\'',
-                                                                                                                   '').replace(
-            ' ', '')
+        ok_str = ' '.join([str((k, v)) for (k, v) in self.http_status_dict.items() if
+                           '200' <= k < '400']).replace('\'', '').replace(' ', '')
         client_err_str = ' '.join(
             [str((k, v)) for (k, v) in self.http_status_dict.items() if '400' <= k < '500']).replace('\'',
                                                                                                      '').replace(
@@ -698,15 +699,14 @@ class ResultWriter(Process):
                     key = str("%.4f - %.4f" % (interval_min, interval_max))
                     latency_requests_number_list.append(key)
                     latency_requests_number_map[key] = sum(
-                        k >= interval_min and k <= interval_max for k in self.progress_latency)
+                        interval_min <= k <= interval_max for k in self.progress_latency)
                     if i < piece_number / 2:
                         interval_min += piece_size_for_first_part
                     elif i >= piece_number / 2:
                         interval_min += piece_size_for_second_part
 
-        ok_str = ' '.join([str((k, v)) for (k, v) in self.http_status_dict.items() if '200' <= k < '400']).replace('\'',
-                                                                                                                   '').replace(
-            ' ', '')
+        ok_str = ' '.join([str((k, v)) for (k, v) in self.http_status_dict.items() if
+                           '200' <= k < '400']).replace('\'', '').replace(' ', '')
         client_err_str = ' '.join(
             [str((k, v)) for (k, v) in self.http_status_dict.items() if '400' <= k < '500']).replace('\'',
                                                                                                      '').replace(
@@ -763,8 +763,8 @@ class ResultWriter(Process):
             if self.progress_latency is not None and len(self.progress_latency) > 0:
                 total_result += '[latencyPercentileMap]' + str(self.accurate_summary_dict[
                                                                    'latencyPercentileMapDescription']) + '\n'
-                latencyPercentileMapAvg = round(sum(self.progress_latency) / len(self.progress_latency) * 1000, 3)
-                total_result += '[latencyPercentileMapAvg]' + str(latencyPercentileMapAvg) + ' ms\n\n'
+                latency_percentile_map_avg = round(sum(self.progress_latency) / len(self.progress_latency) * 1000, 3)
+                total_result += '[latencyPercentileMapAvg]' + str(latency_percentile_map_avg) + ' ms\n\n'
             else:
                 total_result += '[latencyPercentileMap] --\n'
                 total_result += '[latencyPercentileMapAvg] --\n\n'
@@ -814,10 +814,10 @@ class ResultWriter(Process):
     def generate_latency_percentile_map_description(self):
         self.progress_latency.sort()
 
-        progressMinLatency = round(self.progress_latency[0] * 1000, 3)
-        progressMaxLatency = round(self.progress_latency[-1] * 1000, 3)
+        progress_min_latency = round(self.progress_latency[0] * 1000, 3)
+        progress_max_latency = round(self.progress_latency[-1] * 1000, 3)
 
-        self.accurate_summary_dict['latencyPercentileMapDescription'] = str(progressMinLatency) + '(' + 'min),'
+        self.accurate_summary_dict['latencyPercentileMapDescription'] = str(progress_min_latency) + '(' + 'min),'
 
         for key in sorted(self.accurate_summary_dict['latencyPercentileMapSections']):
             latency_index = int(round(
@@ -829,7 +829,7 @@ class ResultWriter(Process):
             self.accurate_summary_dict['latencyPercentileMapSections'][key] = latency_percentile_map_result
 
         self.accurate_summary_dict['latencyPercentileMapDescription'] = ''.join(
-            [self.accurate_summary_dict['latencyPercentileMapDescription'], str(progressMaxLatency), '(',
+            [self.accurate_summary_dict['latencyPercentileMapDescription'], str(progress_max_latency), '(',
              'max)'])
 
         pass
@@ -857,11 +857,8 @@ class ResultWriter(Process):
                        'latencyPercentDescription', 'bestRequests', 'worstRequests']
         result_str = ''
         for item in result_keys:
-            result_str += str(self.accurate_summary_dict[item]).replace(',', ';').replace('\n', ';').replace('\r',
-                                                                                                             '').replace(
-                '\'',
-                '').replace(
-                '{', '').replace('}', '')
+            result_str += str(self.accurate_summary_dict[item]).replace(',', ';').replace('\n', ';').replace('\r', '').\
+                replace('\'', '').replace('{', '').replace('}', '')
             result_str += ','
         result_str = result_str[:-1]
         i = -1
