@@ -1,11 +1,70 @@
 # obscmd
-This tool is a client for Huawei OBS running in shell or cmd, for processing data download and upload.
-Please refer to the word doc for configuration and start instruction.
+This tool is a client tool for Huawei, OBS running in shell or cmd, for processing data download and upload.
 
 
 -- UPDATES:
-2018.1.17 - v4.2.1
+2018.1.31 - v4.5.0
+1. Added - add a configuration for checking the file is changing before putting object.
+2. Fixed - if comparison of etag and md5 fails, delete the object.
 
+2018.1.23 - v4.4.0
+1. Added - enhance the timed task tool
+
+2018.1.20 - v4.3.0
+1. Fixed - normalize the variables' name
+2. Fixed - cancel windows support, cancel dealing with large files file first in upload.
+
+2018.1.17 - v4.2.1
+1. Fixed - optimize the format of brief file
+2. Fixed - some spelling errors
+
+2018.1.16 - v4.2.0
+1. Fixed - use set() to compare remote with local instead of list()
+2. Fixed - change the interpreter header to '#!/usr/bin/env python' in the run file
+
+2018.1.12 - v4.1.0
+1. Fixed - not work with virtual host mode.
+
+2018.1.11 - v4.0.0
+1. Add feature - Record ETag to detail file and retry on status and comparing ETag for put_object.
+2. Add feature - Record x-amz-id-2 to detail file.
+3. Fixed - progress calculated from the requests number to the data size.
+
+2018.1.4 - v3.7.5
+1. Add feature - Specify multiple files for uploading.
+
+2018.1.2 - v3.7.4
+1. Fixed setting of headers of content-type.
+
+2017.12.28 - v3.7.3
+1. Add feature - Specify multiple objects or prefix or mixed for downloading.
+
+2017.12.15 - v3.7.2
+1. fix a bug for net speed refreshing.
+
+2017.12.11 - v3.7.1
+1. Fix bugs for wrong comments.
+2. Catch the exception for listing local dirs.
+3. Deal with large files uploading first under any situation.
+
+2017.12.06 - v3.7.0
+1. Change the strategy of default authorization header algorithm.
+2. In linux, when upload, deals with large or small files randomly.(Deal with large files first before)
+3. Fix a bug for the progress bar display.
+4. Add protection for the upload part size[5MB, 5GB].
+
+2017.11.30 - v3.6.1
+1. Fix bug for requests count refresh in failed multipart upload.
+
+2017.11.30 - v3.6.0
+1. Retry three times, the interval is 5s, and bug fixed.
+2. Optimize screen print.
+
+2017.11.28 - v3.5.0
+1. Retry once in multipart tasks.
+2. Optimize exceptions in multipart tasks.
+
+2017.11.25 - v3.2.0
 Create ReadMe
 Initial features：
 1.  Upload multiple files concurrently.
@@ -74,7 +133,7 @@ MultipartObjectSize	 //进行分段操作的对象大小分界值（Byte）
 
 PartSize	 //段大小（Byte）
 
-ThreadsPerUser	//并发数
+Concurrency	//并发数
 
 BucketNameFixed	//桶名
 
