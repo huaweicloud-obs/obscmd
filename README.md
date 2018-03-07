@@ -3,6 +3,9 @@ This tool is a client tool for Huawei, OBS running in shell or cmd, for processi
 
 
 -- UPDATES:
+2018.3.5 - v4.6.0
+1. Fixed - bug in range_download when content data length error
+
 2018.1.31 - v4.5.0
 1. Added - add a configuration for checking the file is changing before putting object.
 2. Fixed - if comparison of etag and md5 fails, delete the object.

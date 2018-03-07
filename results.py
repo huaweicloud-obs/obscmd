@@ -2,6 +2,7 @@
 import sys
 import time
 import logging
+import logging.handlers
 import os
 import Queue
 import copy
@@ -275,7 +276,7 @@ class ResultWriter(Process):
         elif status <= '900':
             self.rough_summary_dict['totalServerErr'] += 1
             self.accurate_summary_dict['totalServerErr'] += 1
-        elif status >= '9900':
+        elif status >= '9800':
             self.rough_summary_dict['totalOtherErr'] += 1  # 未知错误请求
             self.accurate_summary_dict['totalOtherErr'] += 1  # unknown exception
         if status.find('Flow Control') != -1:
@@ -291,7 +292,7 @@ class ResultWriter(Process):
             self.rough_summary_dict['roughTotalSendBytes'] += data_send
             self.rough_summary_dict['roughTotalRecvBytes'] += data_recv
 
-        # accurate_summary_dict    
+        # accurate_summary_dict
         self.accurate_summary_dict['requests'] += 1
         if status < '400' or self.config['BadRequestCounted']:
             self.accurate_summary_dict['totalLatency'] += latency

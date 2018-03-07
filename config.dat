@@ -11,7 +11,7 @@
     # bucket-owner-read | bucket-owner-full-control, 空不携带
     PutWithACL = private
 
-    # 需上传的本地文件夹或文件的地址（若上传多个单独指定的文件，可以用英文逗号分隔。若指定文件夹，请勿使用分隔符混合配置。）
+    # 需上传的本地文件夹或文件的地址（若上传多个单独指定的文件，可以用英文逗号分隔。若指定的路径为文件夹，则只能配置一个路径。）
     # 示例：/home/objects 或 /home/dir1/1.txt 或 /home/dir1/1.txt,/home/dir2/2.txt
     LocalPath =
 
@@ -20,13 +20,13 @@
     RemoteDir =
 
     # 是否跳过桶内已存在文件(true/false)，若桶内对象数过多，请勿开启此项配置
-    IgnoreExist =
+    IgnoreExist = false
 
-    # 是否校验以及在detail文件中记录本地MD5和服务端返回的ETag(true/false)
-    CompareETag =
+    # 是否比较校验本地MD5和服务端返回的ETag以及在detail文件中记录(true/false)
+    CompareETag = true
 
     # 是否检查本地文件是否正在被修改，若正在被修改，则跳过该文件(true/false)
-    CheckFileChanging =
+    CheckFileChanging = true
 
 
 ###########################  Download Configuration  #################################
@@ -52,7 +52,7 @@
     # 示例： BucketNameFixed = fixed-bucket-01
     BucketNameFixed =
 
-    # 工作并发数
+    # 工作并发数（置空视为1）
     Concurrency = 20
 
     # 扫描到对象如果大于MultipartObjectSize，则会以段形式上传并合并，或者以range方式下载并合并，置空不分段，单位为字节B

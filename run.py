@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/python
 # -*- coding:utf-8 -*-
 import Queue
 import base64
@@ -29,7 +29,7 @@ from util import User
 
 logging.handlers.ConcurrentRotatingFileHandler = myLib.cloghandler.ConcurrentRotatingFileHandler
 
-VERSION = 'v4.5.0'
+VERSION = 'v4.6.0'
 RETRY_TIMES = 3
 UPLOAD_PART_MIN_SIZE = 5 * 1024 ** 2
 UPLOAD_PART_MAX_SIZE = 5 * 1024 ** 3
@@ -39,12 +39,26 @@ TEST_CASES = {
 }
 
 user = None
+
+# configurations
 running_config = {}
+
+# upload tasks
 all_files_queue = multiprocessing.Queue()
+
+# download tasks
 all_objects_queue = multiprocessing.Queue()
+
+# statistic tasks
 results_queue = multiprocessing.Queue()
+
+# lock for process workers
 lock = multiprocessing.Lock()
+
+# count for all workers' concurrency
 current_concurrency = multiprocessing.Value('i', 0)
+
+# data size of all tasks
 total_data = multiprocessing.Value('f', 0)
 total_data_upload = 0
 total_data_download = 0
@@ -146,8 +160,7 @@ def read_config(config_file_name=ConfigFile.FILE_CONFIG):
         else:
             running_config['MultipartObjectSize'] = '0'
 
-        running_config['Concurrency'] = int(running_config['Concurrency']) if running_config['Concurrency'] else 0
-        # running_config['MixLoopCount'] = 1
+        running_config['Concurrency'] = int(running_config['Concurrency']) if running_config['Concurrency'] else 1
         running_config['LongConnection'] = False
         running_config['ConnectionHeader'] = ''
         running_config['CollectBasicData'] = False
@@ -339,7 +352,7 @@ def put_object(worker_id, conn):
     while not all_files_queue.empty():
         try:
             file_tuple = all_files_queue.get(block=False)
-            logging.info('put_object tuple:' + str(file_tuple))
+            logging.warn('put_object tuple:' + str(file_tuple))
             # Check if this file is changing. If true, skip it.
             if running_config['CheckFileChanging']:
                 m_time = os.stat(file_tuple[2]).st_mtime
@@ -464,6 +477,7 @@ def get_object(worker_id, conn):
     while not all_objects_queue.empty():
         try:
             object_tuple = all_objects_queue.get(block=False)
+            logging.warn('get_object tuple:' + str(object_tuple))
         except Empty:
             continue
 
@@ -578,6 +592,10 @@ def process_range_download(rest, object_tuple, save_path_parent, worker_id):
                 md5 = ''
                 e_tag_record = ''
                 while not resp.status.startswith('20'):
+                    if stop_flag_obj.flag:
+                        logging.error('stop_flag_obj True download_part, key: %s, range start: %d. Status is %s.' %
+                                      (rest.key, range_start_t, resp.status))
+                        break
                     if retry_count == RETRY_TIMES:
                         is_last_retry = True
                     resp = obspycmd.OBSRequestHandler(rest_t, temp_conn).make_request(is_range_download=True,
@@ -1010,7 +1028,7 @@ def precondition():
         except ImportError:
             ssl = False
             logging.warn('import ssl module error')
-            return ssl, 'Python version %s ,import ssl module error'
+            return ssl, 'Python version %s ,import ssl module error' % sys.version.split(' ')[0]
     print 'Testing connection to %s\t' % running_config['DomainName'].ljust(20),
     sys.stdout.flush()
     test_conn = None

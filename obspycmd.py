@@ -386,18 +386,8 @@ class OBSRequestHandler:
                     while not stop_flag_obj.flag:
                         chunk = http_response.read(chunk_size)
                         if not chunk:
-                            while not stop_flag_obj.flag:
-                                try:
-                                    part_download_queue.put(None, block=True, timeout=1)
-                                    has_none_been_put = True
-                                    logging.info('chunk is empty, break cycle')
-                                    recv_body = '[receive content], length: %d' % self.response.recv_bytes
-                                    break
-                                except Full:
-                                    pass
-                            else:
-                                logging.info('stop put None, range_start: %d' % range_start)
-                                raise Exception('Stop Because Some Range_download Failed')
+                            logging.info('chunk is empty, break cycle')
+                            recv_body = '[receive content], length: %d' % self.response.recv_bytes
                             break
                         self.response.recv_bytes += len(chunk)
                         offset = range_start + chunk_size * count
@@ -476,6 +466,17 @@ class OBSRequestHandler:
                 logging.error(
                     'data error. content_length %d != recvBytes %d' % (content_length, self.response.recv_bytes))
                 raise Exception("Data Error Content-Length")
+            if http_response.status < 300 and self.obs_request.request_type == 'GetObject' and is_range_download:
+                while not stop_flag_obj.flag:
+                    try:
+                        part_download_queue.put(None, block=True, timeout=1)
+                        has_none_been_put = True
+                        break
+                    except Full:
+                        pass
+                else:
+                    logging.info('stop put None, range_start: %d' % range_start)
+                    raise Exception('Stop Because Some Range_download Failed')
         except KeyboardInterrupt:
             if not self.response.status:
                 self.response.status = '9991 KeyboardInterrupt'
