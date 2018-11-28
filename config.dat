@@ -1,11 +1,10 @@
 ####################################     Operation     #########################################
 
     # 指定对本地文件的操作类型
-    # 可选：Upload、Download
-    Operation =
+    # 可选：Upload、Download、Copy
+    Operation =Copy
 
 ############################   Upload Configuration   ################################
-
 
     # 上传对象同时指定ACL，可选：private | public-read |public-read-write | authenticated-read
     # bucket-owner-read | bucket-owner-full-control, 空不携带
@@ -28,7 +27,12 @@
     # 是否检查本地文件是否正在被修改，若正在被修改，则跳过该文件(true/false)
     CheckFileChanging = true
 
+    ArchiveAfterUpload =
 
+    ArchiveDir = /home/archive
+
+    CheckSoftLinks = True
+    CheckRoot = False
 ###########################  Download Configuration  #################################
 
 
@@ -36,24 +40,38 @@
     # 示例：home/dir/（下载文件夹）或 home/obj（下载单个对象）或 home/obj*（下载home文件夹中以obj为前缀的所有对象）
     # 可以混合配置，以英文逗号分隔
     DownloadTarget =
+    # 按照本地文件中的对象列表进行下载，文件格式为xx.log,文件中一行为一个对象名称
+    # DownloadAccordRecord=/root/test/lessdif.log;
+    DownloadAccordRecord=
 
     # 本地保存路径
     # 示例： /home/download_test
     SavePath =
 
+###########################  Copy Configuration  #################################
+
+
+    # 需要从一个桶复制到另外一个桶的内容（若置空则复制源桶内所有对象）
+    # 需要复制的源桶配置
+    CopySrcBucket = obs-tools
+    # 示例：home/dir/（复制文件夹内所有对象）或 home/obj.txt（复制单个对象）或 home/obj（复制home文件夹中以obj为前缀的所有对象）
+    # 可以混合配置，以英文‘\’分隔; 如：dir1/ \ testx.txt \ obj
+    CopyObjectTarget=
+    # 目的桶
+    CopyDstBucket = obs-training
 
 #################################   Common Configuration   ###################################
 
     # 账户AK和SK
-    AK =
-    SK =
+    AK = AFTLYZWWP3CZ5AJQSSSC
+    SK = qMG3L1hTu0suQ4gNipYQTZoOdfZQ94UCoBvzazku
 
     # 固定桶名
     # 示例： BucketNameFixed = fixed-bucket-01
-    BucketNameFixed =
+    BucketNameFixed = obs-tools
 
     # 工作并发数（置空视为1）
-    Concurrency = 20
+    Concurrency =20 
 
     # 扫描到对象如果大于MultipartObjectSize，则会以段形式上传并合并，或者以range方式下载并合并，置空不分段，单位为字节B
     # 示例： MultipartObjectSize = 1073741824(= 1GB)，若对象大于1GB，进行分段的上传和下载操作
@@ -74,16 +92,16 @@
     #  中国华南区1    cn-south-1    	obs.cn-south-1.myhwclouds.com
 
     # 请求所在Region，当使用“KMS服务端加密算法”或“特殊鉴权签名算法”且环境配置为多Region模式时必填。
-    Region =
+    Region =cn-north-1
 
     # 域名地址
-    DomainName = obs.myhwclouds.com
+    DomainName = obs.cn-north-1.myhwclouds.com
 
     # 是否使用虚拟主机方式请求，若使用虚拟主机方式，需要保证域名配置正确。
-    VirtualHost = false
+    VirtualHost = true
 
     # 使用HTTP还是HTTPs请求。
-    IsHTTPs = true
+    IsHTTPs = false
 
     # ssl协议版本号配置，当IsHTTPs为True时生效。
     # 可选值包括：TLSv1, TLSv1_1, TLSv1_2,SSLv23, SSLv2, SSLv3 (不配置默认为SSLv23)
@@ -109,6 +127,11 @@
 
     # 连接建立/请求等待超时时间，单位为s
     ConnectTimeout = 300
+    ProxyHost =
+    ProxyPort =
+    ProxyUserName =
+    ProxyPassWord =
+
 
     # 是否记录每个请求的详细结果到detail文件,true|false,关闭该功能不影响性能结果统计。
     RecordDetails = true
@@ -122,3 +145,4 @@
 
     # 是否打印运行中的实时结果和进度。
     PrintProgress = True
+

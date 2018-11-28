@@ -4,7 +4,7 @@ import sys
 
 LOCAL_SYS = platform.system().lower()
 SYS_ENCODING = sys.getfilesystemencoding()
-
+IS_PYTHON2 = sys.version_info.major == 2 or sys.version < '3'
 
 class ConfigFile(object):
     FILE_CONFIG = 'config.dat'

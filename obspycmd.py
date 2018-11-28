@@ -14,43 +14,83 @@ from Queue import Full
 
 if sys.version < '2.7':
     import myLib.myhttplib as httplib
-try:
-    import ssl
-except ImportError:
-    ssl = None
-    logging.error('import ssl module error')
-try:
-    _create_unverified_https_context = ssl._create_unverified_context
-except AttributeError:
-    # Legacy Python that doesn't verify HTTPS certificates by default
-    logging.warn('create unverified https context except')
-else:
-    # Handle target environment that doesn't support HTTPS verification
-    ssl._create_default_https_context = _create_unverified_https_context
-
 
 class MyHTTPConnection:
-    def __init__(self, host, is_secure=False, ssl_version=None, timeout=80, long_connection=False, conn_header=''):
+
+    def __init__(self, host, is_secure=False, ssl_version=None, timeout=80,
+                 long_connection=False, conn_header='', proxy_host=None,
+                 proxy_port=None, proxy_username=None, proxy_password=None):
         self.is_secure = is_secure
-        if self.is_secure:
-            self.sslVersion = ssl.__dict__['PROTOCOL_' + ssl_version]
         self.timeout = timeout
         self.connection = None
         self.host = host
         self.root_host = self.host
         self.long_connection = long_connection
         self.conn_header = conn_header
+        self.proxy_host = proxy_host
+        self.proxy_port = proxy_port
+        self.proxy_username = proxy_username
+        self.proxy_password = proxy_password
+        self._preimport()
+        if self.is_secure:
+            self.sslVersion = self.myssl.__dict__['PROTOCOL_' + ssl_version]
+
+    def _preimport(self):
+        try:
+            import ssl
+            self.myssl = ssl
+        except ImportError:
+            self.myssl = None
+            if self.is_secure:
+                logging.error('import ssl module error')
+        try:
+            _create_unverified_https_context = self.myssl._create_unverified_context
+        except AttributeError:
+            # Legacy Python that doesn't verify HTTPS certificates by default
+            logging.warn('create unverified https context except')
+        else:
+            # Handle target environment that doesn't support HTTPS verification
+            self.myssl._create_default_https_context = _create_unverified_https_context
 
     def create_connection(self):
-        if self.is_secure:
-            if util.compare_version(sys.version.split()[0], '2.7.9') >= 0:
-                self.connection = httplib.HTTPSConnection(self.host + ':443', timeout=self.timeout,
-                                                          context=ssl.SSLContext(self.sslVersion))
+        if self.proxy_host and self.proxy_port:
+            _header = {}
+            if self.proxy_username and self.proxy_password:
+                _header['Proxy-Authorization'] = 'Basic %s' % (
+                    util.base64_encode(str(self.proxy_username) + ':' + str(self.proxy_password)))
+            if self.is_secure:
+                if util.compare_version(sys.version.split()[0], '2.7.9') >= 0:
+                    self.connection = httplib.HTTPSConnection(self.proxy_host,
+                                                              port=self.proxy_port,
+                                                              timeout=self.timeout,
+                                                              context=self.myssl.SSLContext(
+                                                                  self.sslVersion))
+                else:
+                    self.connection = httplib.HTTPSConnection(self.proxy_host,
+                                                              port=self.proxy_port,
+                                                              timeout=self.timeout)
+                self.connection.set_tunnel(self.host, port=443, headers=_header)
             else:
-                self.connection = httplib.HTTPSConnection(self.host + ':443', timeout=self.timeout)
+                self.connection = httplib.HTTPConnection(self.proxy_host,
+                                                         port=self.proxy_port,
+                                                         timeout=self.timeout)
+                self.connection.set_tunnel(self.host, port=80, headers=_header)
+            logging.debug('create connection to host: %s by proxy host: %s' % (
+                self.host, self.proxy_host))
         else:
-            self.connection = httplib.HTTPConnection(self.host + ':80', timeout=self.timeout)
-        logging.debug('create connection to host: ' + self.host)
+            if self.is_secure:
+                self.connection = httplib.HTTPSConnection(self.host, port=443,
+                                                          timeout=self.timeout,
+                                                          context=self.myssl.SSLContext(
+                                                              self.sslVersion)) if util.compare_version(
+                    sys.version.split()[0],
+                    '2.7.9') >= 0 else httplib.HTTPSConnection(self.host,
+                                                               port=443,
+                                                               timeout=self.timeout)
+            else:
+                self.connection = httplib.HTTPConnection(self.host, port=80,
+                                                         timeout=self.timeout)
+            logging.debug('create connection to host: ' + self.host)
 
     def close_connection(self):
         if not self.connection:
@@ -68,8 +108,10 @@ class MyHTTPConnection:
 
 
 class OBSRequestDescriptor:
-    def __init__(self, request_type, ak='', sk='', auth_algorithm='', bucket="", key="", send_content='',
-                 content_length=0, virtual_host=False, domain_name='obs.huawei.com', region='dftRgn'):
+    def __init__(self, request_type, ak='', sk='', auth_algorithm='', bucket="",
+                 key="", send_content='',
+                 content_length=0, virtual_host=False,
+                 domain_name='obs.huawei.com', region='dftRgn'):
         self.request_type = request_type
         self.ak = ak
         self.sk = sk
@@ -89,25 +131,34 @@ class OBSRequestDescriptor:
 
     def _get_http_method_from_request_type_(self):
         if self.request_type in (
-                'ListUserBuckets', 'ListObjectsInBucket', 'GetObject', 'GetBucketVersioning', 'GetBucketWebsite',
-                'GetBucketCORS', 'GetBucketTag', 'GetBucketLog', 'GetBucketStorageQuota', 'GetBucketAcl',
+                'ListUserBuckets', 'ListObjectsInBucket', 'GetObject',
+                'GetBucketVersioning', 'GetBucketWebsite',
+                'GetBucketCORS', 'GetBucketTag', 'GetBucketLog',
+                'GetBucketStorageQuota', 'GetBucketAcl',
                 'GetBucketPolicy',
-                'GetBucketLifecycle', 'GetBucketNotification', 'GetBucketMultiPartsUpload', 'GetBucketLocation',
+                'GetBucketLifecycle', 'GetBucketNotification',
+                'GetBucketMultiPartsUpload', 'GetBucketLocation',
                 'GetBucketStorageInfo', 'GetObjectUpload', 'GetObjectAcl'):
             return 'GET'
         elif self.request_type in (
-                'CreateBucket', 'PutObject', 'PutBucketVersioning', 'PutBucketWebsite', 'UploadPart', 'CopyPart',
-                'CopyObject', 'PutBucketCORS', 'PutBucketTag', 'PutBucketLog', 'PutBucketStorageQuota', 'PutBucketAcl',
-                'PutBucketPolicy', 'PutBucketLifecycle', 'PutBucketNotification', 'PutObjectAcl'):
+                'CreateBucket', 'PutObject', 'PutBucketVersioning',
+                'PutBucketWebsite', 'UploadPart', 'CopyPart',
+                'CopyObject', 'PutBucketCORS', 'PutBucketTag', 'PutBucketLog',
+                'PutBucketStorageQuota', 'PutBucketAcl',
+                'PutBucketPolicy', 'PutBucketLifecycle',
+                'PutBucketNotification', 'PutObjectAcl'):
             return 'PUT'
         elif self.request_type in ('HeadBucket', 'HeadObject'):
             return 'HEAD'
         elif self.request_type in (
-                'DeleteBucket', 'DeleteObject', 'DeleteBucketWebsite', 'DeleteBucketCORS', 'AbortMultiUpload',
-                'DeleteBucketTag', 'DeleteBucketPolicy', 'DeleteBucketLifecycle'):
+                'DeleteBucket', 'DeleteObject', 'DeleteBucketWebsite',
+                'DeleteBucketCORS', 'AbortMultiUpload',
+                'DeleteBucketTag', 'DeleteBucketPolicy',
+                'DeleteBucketLifecycle'):
             return 'DELETE'
         elif self.request_type in (
-                'BucketDelete', 'RestoreObject', 'DeleteMultiObjects', 'InitMultiUpload', 'CompleteMultiUpload',
+                'BucketDelete', 'RestoreObject', 'DeleteMultiObjects',
+                'InitMultiUpload', 'CompleteMultiUpload',
                 'PostObject'):
             return 'POST'
         elif self.request_type in ('OPTIONSBucket', 'OptionsObject'):
@@ -125,11 +176,16 @@ class OBSRequestDescriptor:
         for key in self.query_args:
             if self.query_args[key] and self.query_args[key].strip():
                 if self.url.find('?') != -1:
-                    self.url += ('&' + key + '=' + urllib.quote_plus(self.query_args[key]))
+                    self.url += (
+                        '&' + key + '=' + urllib.quote_plus(
+                            self.query_args[key]))
                 else:
-                    self.url += ('?' + key + '=' + urllib.quote_plus(self.query_args[key]))
+                    self.url += (
+                        '?' + key + '=' + urllib.quote_plus(
+                            self.query_args[key]))
 
-            elif self.query_args[key] is None or self.query_args[key].strip() == '':
+            elif self.query_args[key] is None or self.query_args[
+                key].strip() == '':
                 if self.url.find('?') != -1:
                     self.url += ('&' + key)
                 else:
@@ -143,7 +199,8 @@ class OBSRequestDescriptor:
     def add_content_length_header(self):
         # deal with send_content and content_length, and add to the header
         if self.send_content:
-            self.content_length = self.headers['Content-Length'] = len(self.send_content)
+            self.content_length = self.headers['Content-Length'] = len(
+                self.send_content)
         elif self.send_content == '' and self.content_length != 0:
             self.headers['Content-Length'] = self.content_length
         elif self.send_content == '' and self.content_length == 0:
@@ -174,14 +231,17 @@ class DefineResponse:
         self.recv_bytes = 0
         self.return_data = None
         self.e_tag = ''
+        self.meta_md5 = ''
         self.recv_body = ''
+        self.content_length = ''
 
     @property
     def to_string(self):
         return 'request_id: %s, status: %s,  return_data: %r, start_time: %.3f, end_time: %.3f, sendBytes: %d, ' \
-               'recvBytes: %d, ETag: %s, x-amz-id-2: %s' % (self.request_id, self.status, self.return_data,
-                                                            self.start_time, self.end_time, self.send_bytes,
-                                                            self.recv_bytes, self.e_tag, self.id2)
+               'recvBytes: %d, ETag: %s, x-amz-id-2: %s' % (
+                   self.request_id, self.status, self.return_data,
+                   self.start_time, self.end_time, self.send_bytes,
+                   self.recv_bytes, self.e_tag, self.id2)
 
 
 class OBSRequestHandler:
@@ -220,7 +280,8 @@ class OBSRequestHandler:
             self.my_http_connection.create_connection()
         # If connection exists, and the bucket changes, connection should be recreated.
         elif self.obs_request.virtual_host:
-            index = self.my_http_connection.host.index(self.my_http_connection.root_host)
+            index = self.my_http_connection.host.index(
+                self.my_http_connection.root_host)
             if index:  # previous bucket exists
                 if not self.obs_request.bucket:  # no bucket in current task
                     self.my_http_connection.host = self.my_http_connection.root_host
@@ -243,10 +304,16 @@ class OBSRequestHandler:
             else:
                 self.obs_request.headers['Connection'] = 'close'
         else:
-            self.obs_request.headers['Connection'] = self.my_http_connection.conn_header
+            self.obs_request.headers[
+                'Connection'] = self.my_http_connection.conn_header
 
     def _get_return_data_from_response_body_(self, body):
-        if self.obs_request.request_type not in ('ListObjectsInBucket', 'InitMultiUpload', 'CopyPart', 'CopyObject'):
+        logging.debug(
+            "=== request type is %s ===" % self.obs_request.request_type)
+        if self.obs_request.request_type not in (
+                'ListObjectsInBucket', 'InitMultiUpload', 'CopyPart',
+                'CopyObject',
+                'CompleteMultiUpload'):
             return None
         if self.obs_request.request_type == 'ListObjectsInBucket':  # for marker, return None if can't find the marker
             if len(body) < 50:
@@ -264,10 +331,15 @@ class OBSRequestHandler:
                 if len(upload_id) > 0:
                     logging.debug('find upload_id here %s' % upload_id)
                     return upload_id
-        elif self.obs_request.request_type == 'CopyPart' or self.obs_request.request_type == 'CopyObject':
+        elif self.obs_request.request_type == 'CopyPart' or self.obs_request.request_type == 'CopyObject' or self.obs_request.request_type == 'CompleteMultiUpload':
+            logging.debug(
+                "=== now in replace etag because of the request type is %s ===" % self.obs_request.request_type)
             etag = re.findall('<ETag>.*</ETag>', body)
             if len(etag) > 0:
-                etag = etag[0][6:-7].strip()
+                if self.obs_request.request_type == 'CompleteMultiUpload':
+                    etag = etag[0][7:-8].strip()
+                else:
+                    etag = etag[0][6:-7].strip()
                 if len(etag) > 0:
                     logging.debug('find etag here %s' % etag)
                     return etag
@@ -286,8 +358,10 @@ class OBSRequestHandler:
                 return request_id
         return '9999999999999997'
 
-    def make_request(self, is_part_upload=False, part_index=None, file_location=None, save_path_parent=None,
-                     file_name=None, is_range_download=False, part_download_queue=None, range_start=None,
+    def make_request(self, is_part_upload=False, part_index=None,
+                     file_location=None, save_path_parent=None,
+                     file_name=None, is_range_download=False,
+                     part_download_queue=None, range_start=None,
                      stop_flag_obj=None, is_last_retry=False):
         has_none_been_put = False
         chunk_size = 65536
@@ -297,20 +371,27 @@ class OBSRequestHandler:
         recv_body = ''
         self.response.start_time = time.time()
         try:
-            self.my_http_connection.connection.putrequest(self.obs_request.method, self.obs_request.url, skip_host=1)
+            self.my_http_connection.connection.putrequest(
+                self.obs_request.method, self.obs_request.url, skip_host=1)
             # send headers
             for k in self.obs_request.headers.keys():
                 if isinstance(self.obs_request.headers[k], list):
                     for i in self.obs_request.headers[k]:
                         self.my_http_connection.connection.putheader(k, i)
                 else:
-                    self.my_http_connection.connection.putheader(k, self.obs_request.headers[k])
+                    self.my_http_connection.connection.putheader(k,
+                                                                 self.obs_request.headers[
+                                                                     k])
             self.my_http_connection.connection.endheaders()
-            local_addr = str(self.my_http_connection.connection.sock._sock.getsockname())
-            peer_addr = str(self.my_http_connection.connection.sock._sock.getpeername())
-            logging.debug('Request:[%s], conn:[%s->%s], sendURL:[%s], sendHeaders:[%r], sendContent:[%s]' % (
-                self.obs_request.request_type, local_addr, peer_addr, self.obs_request.url, self.obs_request.headers,
-                self.obs_request.send_content[0:1024]))
+            local_addr = str(
+                self.my_http_connection.connection.sock._sock.getsockname())
+            peer_addr = str(
+                self.my_http_connection.connection.sock._sock.getpeername())
+            logging.debug(
+                'Request:[%s], conn:[%s->%s], sendURL:[%s], sendHeaders:[%r], sendContent:[%s]' % (
+                    self.obs_request.request_type, local_addr, peer_addr,
+                    self.obs_request.url, self.obs_request.headers,
+                    self.obs_request.send_content[0:1024]))
 
             if self.obs_request.content_length > 0 and not self.obs_request.send_content:
                 if is_part_upload:
@@ -318,15 +399,18 @@ class OBSRequestHandler:
                         obj_to_put.seek(part_index)
                         while self.response.send_bytes < self.obs_request.content_length:
                             if stop_flag_obj.flag:
-                                raise Exception('Stop Because Some Part_upload Failed')
+                                raise Exception(
+                                    'Stop Because Some Part_upload Failed')
                             if self.obs_request.content_length - self.response.send_bytes >= chunk_size:
                                 chunk = obj_to_put.read(chunk_size)
                                 self.response.send_bytes += chunk_size
                             else:
-                                chunk = obj_to_put.read(self.obs_request.content_length -
-                                                        self.response.send_bytes)
-                                self.response.send_bytes += (self.obs_request.content_length -
-                                                             self.response.send_bytes)
+                                chunk = obj_to_put.read(
+                                    self.obs_request.content_length -
+                                    self.response.send_bytes)
+                                self.response.send_bytes += (
+                                    self.obs_request.content_length -
+                                    self.response.send_bytes)
                             self.my_http_connection.connection.send(chunk)
                 else:
                     with open(file_location, 'rb') as obj_to_put:
@@ -335,25 +419,32 @@ class OBSRequestHandler:
                                 chunk = obj_to_put.read(chunk_size)
                                 self.response.send_bytes += chunk_size
                             else:
-                                chunk = obj_to_put.read(self.obs_request.content_length -
-                                                        self.response.send_bytes)
-                                self.response.send_bytes += (self.obs_request.content_length -
-                                                             self.response.send_bytes)
+                                chunk = obj_to_put.read(
+                                    self.obs_request.content_length -
+                                    self.response.send_bytes)
+                                self.response.send_bytes += (
+                                    self.obs_request.content_length -
+                                    self.response.send_bytes)
                             self.my_http_connection.connection.send(chunk)
             else:
-                self.my_http_connection.connection.send(self.obs_request.send_content)
+                self.my_http_connection.connection.send(
+                    self.obs_request.send_content)
                 self.response.send_bytes += len(self.obs_request.send_content)
             wait_response_time_start = time.time()
             logging.debug('total send bytes: %d, content-length: %d' % (
                 self.response.send_bytes, self.obs_request.content_length))
             # get response
-            http_response = self.my_http_connection.connection.getresponse(buffering=True)
+            http_response = self.my_http_connection.connection.getresponse(
+                buffering=True)
             wait_response_time = time.time() - wait_response_time_start
             logging.debug('get response, wait time %.3f' % wait_response_time)
             # read the body
-            content_length = int(http_response.getheader('Content-Length', '-1'))
+            content_length = int(
+                http_response.getheader('Content-Length', '-1'))
             logging.debug('get ContentLength: %d' % content_length)
-            self.response.request_id = http_response.getheader('x-amz-request-id', '9999999999999998')
+            self.response.content_length = content_length
+            self.response.request_id = http_response.getheader(
+                'x-amz-request-id', '9999999999999998')
             self.response.id2 = http_response.getheader('x-amz-id-2', 'None')
             if http_response.status < 300 and self.obs_request.request_type == 'GetObject':
                 if not is_range_download:
@@ -375,7 +466,8 @@ class OBSRequestHandler:
                                 self.response.recv_bytes += len(chunk)
                                 f.write(chunk)
                         except Exception, e:
-                            logging.error('download file(%s) error(%s)' % (self.obs_request.key, e))
+                            logging.error('download file(%s) error(%s)' % (
+                                self.obs_request.key, e))
                             try:
                                 os.remove(file_path)
                             except Exception:
@@ -394,13 +486,16 @@ class OBSRequestHandler:
                         data = util.Data(chunk=chunk, offset=offset)
                         while not stop_flag_obj.flag:
                             try:
-                                part_download_queue.put(data, block=True, timeout=1)
+                                part_download_queue.put(data, block=True,
+                                                        timeout=1)
                                 break
                             except Full:
                                 pass
                         else:
-                            logging.info('stop put data, range_start: %d' % range_start)
-                            raise Exception('Stop Because Some Range_download Failed')
+                            logging.info(
+                                'stop put data, range_start: %d' % range_start)
+                            raise Exception(
+                                'Stop Because Some Range_download Failed')
                         count += 1
             else:
                 recv_body = http_response.read()
@@ -408,63 +503,92 @@ class OBSRequestHandler:
                 self.response.recv_bytes = len(recv_body)
             # task end
             self.response.end_time = time.time()
-            self.response.status = str(http_response.status) + ' ' + http_response.reason
+            self.response.status = str(
+                http_response.status) + ' ' + http_response.reason
 
             if http_response.status < 400:
+                logging.debug("=== [response:] %s ===" % recv_body)
                 logging.debug(
-                    'Request:[%s], conn: [%s->%s], URL:[%s], wait_response_time:[%.3f], responseStatus:[%s], %r, %r' % (
-                        self.obs_request.request_type, local_addr, peer_addr, self.obs_request.url, wait_response_time,
-                        self.response.status, str(http_response.msg), recv_body[0:1024]))
+                    'Request:[%s], conn: [%s->%s], URL:[%s], wait_response_time:[%.3f], responseStatus:[%s], %r; %r' % (
+                        self.obs_request.request_type, local_addr, peer_addr,
+                        self.obs_request.url, wait_response_time,
+                        self.response.status, str(http_response.msg),
+                        recv_body[0:1024]))
                 if http_response.status in [300, 301, 302, 303, 307]:
                     # get url fron Location, redirect
                     if not http_response.getheader('location', None):
-                        logging.warn('request return 3xx without header location')
+                        logging.warn(
+                            'request return 3xx without header location')
                     else:
                         urlobj = urlparse(http_response.getheader('location'))
                         if not urlobj.scheme or not urlobj.hostname:
-                            logging.error('location format error [%s] ' % http_response.getheader('location'))
+                            logging.error(
+                                'location format error [%s] ' % http_response.getheader(
+                                    'location'))
                         else:
-                            logging.debug('redirect hostname: %s, url:%s' % (urlobj.hostname, urlobj.path))
+                            logging.debug('redirect hostname: %s, url:%s' % (
+                                urlobj.hostname, urlobj.path))
                             self.my_http_connection.close_connection()
-                            self.my_copy_http_connection = copy.deepcopy(self.my_http_connection)
-                            self.my_copy_http_connection.is_secure = (urlobj.scheme == 'https')
+                            self.my_copy_http_connection = copy.deepcopy(
+                                self.my_http_connection)
+                            self.my_copy_http_connection.is_secure = (
+                                urlobj.scheme == 'https')
                             self.my_copy_http_connection.host = urlobj.hostname
                             self.my_copy_http_connection, self.my_http_connection = \
                                 self.my_http_connection, self.my_copy_http_connection
                             self.obs_request.url = urlobj.path
                             self.obs_request.add_host_header(urlobj.hostname)
-                            self.__init__(self.obs_request, self.my_http_connection)
+                            self.__init__(self.obs_request,
+                                          self.my_http_connection)
                             logging.info(
-                                'redirect the request to %s%s' % (self.my_http_connection.host, self.obs_request.url))
-                            self.make_request(is_part_upload, part_index, file_location, save_path_parent,
-                                              file_name, is_range_download, part_download_queue, range_start,
+                                'redirect the request to %s%s' % (
+                                    self.my_http_connection.host,
+                                    self.obs_request.url))
+                            self.make_request(is_part_upload, part_index,
+                                              file_location, save_path_parent,
+                                              file_name, is_range_download,
+                                              part_download_queue, range_start,
                                               stop_flag_obj, is_last_retry)
                             return
             elif http_response.status < 500:
                 logging.warn(
                     'Request:[%s], conn: [%s->%s], URL:[%s], wait_response_time:[%.3f], responseStatus:[%s], %r, %r' % (
-                        self.obs_request.request_type, local_addr, peer_addr, self.obs_request.url, wait_response_time,
-                        self.response.status, str(http_response.msg), recv_body[0:1024]))
+                        self.obs_request.request_type, local_addr, peer_addr,
+                        self.obs_request.url, wait_response_time,
+                        self.response.status, str(http_response.msg),
+                        recv_body[0:1024]))
             else:
                 logging.error(
                     'Request:[%s], conn: [%s->%s], URL:[%s], wait_response_time:[%.3f], responseStatus:[%s], %r, %r' % (
-                        self.obs_request.request_type, local_addr, peer_addr, self.obs_request.url, wait_response_time,
+                        self.obs_request.request_type, local_addr, peer_addr,
+                        self.obs_request.url, wait_response_time,
                         self.response.status,
                         str(http_response.msg), recv_body[0:1024]))
                 if http_response.status == 503:
                     flow_controll_msg = 'Service unavailable, local data center is busy'
                     if recv_body.find(flow_controll_msg) != -1:
                         self.response.status = '503 Flow Control'
-            self.response.e_tag = http_response.getheader('ETag', 'None').strip('"')
-            self.response.return_data = self._get_return_data_from_response_body_(recv_body)
+            self.response.e_tag = http_response.getheader('ETag', 'None').strip(
+                '"')
+            self.response.meta_md5 = http_response.getheader(
+                'x-amz-meta-md5chksum', 'None').strip('"')
+            if self.obs_request.request_type in (
+                    'CompleteMultiUpload', 'CopyPart',
+                    'CopyObject') and self.response.e_tag == 'None':
+                self.response.e_tag = self._get_return_data_from_response_body_(
+                    recv_body)
+            self.response.return_data = self._get_return_data_from_response_body_(
+                recv_body)
             # if a result is wrong, x-amz-request-id may not be found in headers, get it in recv_body
             if self.response.request_id == '9999999999999998' and http_response.status >= 300:
-                self.response.request_id = self._get_request_id_from_body_(recv_body)
+                self.response.request_id = self._get_request_id_from_body_(
+                    recv_body)
             # check content length
             if self.obs_request.method != 'HEAD' and content_length != -1 \
                     and content_length != self.response.recv_bytes:
                 logging.error(
-                    'data error. content_length %d != recvBytes %d' % (content_length, self.response.recv_bytes))
+                    'data error. content_length %d != recvBytes %d' % (
+                        content_length, self.response.recv_bytes))
                 raise Exception("Data Error Content-Length")
             if http_response.status < 300 and self.obs_request.request_type == 'GetObject' and is_range_download:
                 while not stop_flag_obj.flag:
@@ -485,12 +609,15 @@ class OBSRequestHandler:
             stack = traceback.format_exc()
             logging.error(
                 'Caught exception:%s, Request:[%s], conn: [local:%s->peer:%s], URL:[%s], responseStatus:[%s], responseBody:[%r]'
-                % (data, self.obs_request.request_type, local_addr, peer_addr, self.obs_request.url,
+                % (data, self.obs_request.request_type, local_addr, peer_addr,
+                   self.obs_request.url,
                    self.response.status,
                    recv_body[0:1024]))
             logging.error('print stack: %s' % stack)
-            self.response.status = self._get_http_status_from_exception_(data, stack)
-            logging.debug('self.defineResponse.status %s from except' % self.response.status)
+            self.response.status = self._get_http_status_from_exception_(data,
+                                                                         stack)
+            logging.debug(
+                'self.defineResponse.status %s from except' % self.response.status)
         finally:
             # Inform to finish RangeFileWriter
             if is_range_download and not has_none_been_put and is_last_retry:
@@ -509,8 +636,11 @@ class OBSRequestHandler:
                 self.response.end_time = time.time()
             # close connection
             # 1. according to header connection
-            if http_response and ('close' == http_response.getheader('connection', '').lower()
-                                  or 'close' == http_response.getheader('Connection', '').lower()):
+            if http_response and (
+                            'close' == http_response.getheader('connection',
+                                                               '').lower()
+                    or 'close' == http_response.getheader('Connection',
+                                                          '').lower()):
                 logging.info('server inform to close connection')
                 self.my_http_connection.close_connection()
             # 2. a connection error occurs
@@ -540,18 +670,24 @@ class OBSRequestHandler:
         error_map = {
             'connection reset by peer': '9998',  # connection refused by server
             'broken pipe': '9997',  # pipe breaks while IO
-            'timed out': '9996',  # get response timeout, config.dat's ConnectTimeout
-            'badstatusline': '9995',  # wrong status code, common to that server break the connection
+            'timed out': '9996',
+            # get response timeout, config.dat's ConnectTimeout
+            'badstatusline': '9995',
+            # wrong status code, common to that server break the connection
             'connection timed out': '9994',  # create connection timeout
             'the read operation timed out': '9993',  # read response timeout
             'cannotsendrequest': '9992',  # error on sending request
             'keyboardinterrupt': '9991',  # Ctrl+C
-            'name or service not known': '9990',  # can't resolve the server's domain name
+            'name or service not known': '9990',
+            # can't resolve the server's domain name
             'no route to host': '9989',  # can't reach the server's address
             'data error md5': '9901',  # check data md5 error
-            'data error content-length': '9902',  # data size is different from content-length
-            'stop because some range_download failed': '9801',  # other concurrent worker fails the task, stop this task
-            'stop because some part_upload failed': '9802',  # other concurrent worker fails the task, stop this task
+            'data error content-length': '9902',
+            # data size is different from content-length
+            'stop because some range_download failed': '9801',
+            # other concurrent worker fails the task, stop this task
+            'stop because some part_upload failed': '9802',
+            # other concurrent worker fails the task, stop this task
             'other error': '9999'  # other error, check log file
         }
         data = str(data).strip()

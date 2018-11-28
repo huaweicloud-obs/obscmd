@@ -112,6 +112,8 @@ if os.name == 'nt':
 elif os.name == 'posix':
     def lock(file, flags):
         try:
+            # Distributed file system (lustre or glusterfs) is not compatible with this function
+            # If that, information will be submitted to 'the Function not implemented'
             fcntl.flock(file.fileno(), flags)
         except IOError, exc_value:
             # The exception code varies on different systems so we'll catch
