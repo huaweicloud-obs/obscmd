@@ -3,6 +3,36 @@ This tool is a client tool for Huawei, OBS running in shell or cmd, for processi
 
 
 -- UPDATES:
+2018.8.27 - v4.6.7
+1. Added - add a switch to decide whether to skip soft link objects
+
+2018.7.27 - v4.6.6
+1.Added - support proxy Access
+
+2018.6.28 - v4.6.5
+1.Added - supports modification of configuration by command line
+
+2018.6.14 - v4.6.4
+1.Fixed - bug.  Keep the file's directory structure consistent when downloading all objects in the bucket
+
+2018.5.30 - v4.6.3
+1.Modified - Default value of CompareETag True to False
+2.Modified - Default value of VirtualHost False to True
+3.Fixed - bug. When downloading, the local save path will stitch the destination file full path in the bucket
+4.Fixed - bug. Cannot upload or download an empty folder
+5.Fixed. compatible Mac OS
+
+2018.4.20 - v4.6.2
+1.Added feature - Increase object custom metadata to save object MD5 values
+2.Added feature - Verify object consistency and integrity when uploading or downloading
+3.Fixed - Must be root to run
+
+2018.3.31 - v4.6.1
+1. Fixed - bug in timed_task_run when config.dat "LocalPath RemoteDir BucketNameFixed" is not empty it will not be covered by these value in timed_task_config
+2. Added - add logs when running timed_task_run
+3. Added feature - Archive the upload successfully data (for xinhua news)
+4. Change - change sleep time of check file is changing or not , from 3s to 2s
+
 2018.3.5 - v4.6.0
 1. Fixed - bug in range_download when content data length error
 
@@ -172,3 +202,5 @@ step4.
 step5.
   go to dir results and see the detail task process results.
  
+# 开源社区地址
+https://github.com/huaweicloud-obs
