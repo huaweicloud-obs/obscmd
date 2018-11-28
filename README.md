@@ -3,6 +3,8 @@ This tool is a client tool for Huawei, OBS running in shell or cmd, for processi
 
 
 -- UPDATES:
+2018.11.27 - v4.6.7.1
+1. Added - add copy concurrent function.
 2018.8.27 - v4.6.7
 1. Added - add a switch to decide whether to skip soft link objects
 
