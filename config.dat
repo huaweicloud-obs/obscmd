@@ -63,12 +63,12 @@
 #################################   Common Configuration   ###################################
 
     # 账户AK和SK
-    AK = AFTLYZWWP3CZ5AJQSSSC
-    SK = qMG3L1hTu0suQ4gNipYQTZoOdfZQ94UCoBvzazku
+    AK = ***********
+    SK = ******************
 
     # 固定桶名
     # 示例： BucketNameFixed = fixed-bucket-01
-    BucketNameFixed = obs-tools
+    BucketNameFixed = obs-****ls
 
     # 工作并发数（置空视为1）
     Concurrency =20 
