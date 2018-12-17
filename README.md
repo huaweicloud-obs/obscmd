@@ -200,7 +200,7 @@ DownloadTarget	//待下载的OBS桶内目标
 SavePath	//本地保存路径
 
 step4.
- pythone run.py or ./run.py  to do the task
+ python run.py or ./run.py  to do the task
  
 step5.
   go to dir results and see the detail task process results.
